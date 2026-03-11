@@ -947,9 +947,15 @@ function spawnAlien(){
   else if(side===2){x=Math.random()*canvas.width;y=canvas.height+30;vx=(Math.random()-.5)*spd;vy=-spd*(.6+Math.random()*.4);}
   else{x=-30;y=Math.random()*canvas.height;vx=spd;vy=(Math.random()-.5)*spd*.5;}
   const id=alienIdCtr++;
+  // Assign a radar beat slot — unique angle so aliens don't pile up
+  const radarAngleDeg=Math.floor(Math.random()*24)*15; // 0,15,30..345
+  const radarRadius=0.4+Math.random()*0.45;
+  const alienDrums=['kick','snare','hat','clap','perc','rim','tom'];
+  const drumId=alienDrums[id%alienDrums.length];
   aliens.push({id,x,y,vx,vy,hp:2+Math.floor(wave/3),maxHp:2+Math.floor(wave/3),rot:0,size:14+Math.random()*8,
     color:ALIEN_COLORS[id%ALIEN_COLORS.length],shootTimer:60+Math.floor(Math.random()*120),
-    soundTimer:30+Math.floor(Math.random()*60),hit:0,wobble:Math.random()*Math.PI*2});
+    soundTimer:30+Math.floor(Math.random()*60),hit:0,wobble:Math.random()*Math.PI*2,
+    radarAngleDeg, radarRadius, drumId});
 }
 
 function updateAliens(){
@@ -964,10 +970,6 @@ function updateAliens(){
     al.y+=al.vy+Math.cos(al.wobble*.7)*.3;
     al.rot+=.04;
     if(al.hit>0)al.hit--;
-
-    // Sound blip on interval
-    al.soundTimer--;
-    if(al.soundTimer<=0){playAlienSound(al.id);al.soundTimer=40+Math.floor(Math.random()*50);}
 
     // Shoot at player
     al.shootTimer--;
@@ -1049,25 +1051,39 @@ function updateGuitarStrip(){
   const fill=document.getElementById('guitar-bar-fill');
   const icon=document.getElementById('guitar-icon');
   if(!fill||!icon)return;
-  fill.style.height=(guitarCharge*100)+'%';
-  icon.classList.toggle('ready',guitarReady&&!guitarFiring);
+  // Show shots as stacked pips — fill height = shots remaining fraction
+  const frac=guitarShots/GUITAR_MAX_SHOTS;
+  fill.style.height=(frac*100)+'%';
+  // Color: full=hot orange-white, low=dim red
+  const r=Math.floor(180+75*frac),g2=Math.floor(frac*200);
+  fill.style.background=`linear-gradient(to top,rgb(${r},${Math.floor(g2*.4)},0),rgb(${r},${g2},0),${frac>.7?'#fff':'#f80'})`;
+  // Draw pip markers on the bar
+  const barWrap=document.getElementById('guitar-bar-wrap');
+  // Remove old pip markers
+  barWrap.querySelectorAll('.guitar-pip').forEach(p=>p.remove());
+  for(let i=1;i<GUITAR_MAX_SHOTS;i++){
+    const pip=document.createElement('div');
+    pip.className='guitar-pip';
+    pip.style.cssText=`position:absolute;left:0;right:0;bottom:${i*10}%;height:1px;background:rgba(0,0,0,.4);pointer-events:none;`;
+    barWrap.appendChild(pip);
+  }
+  icon.classList.toggle('ready',guitarShots>0&&!guitarFiring);
   icon.classList.toggle('firing',guitarFiring);
-  // Color heat
-  const r=Math.floor(255*guitarCharge),g2=Math.floor(80+120*guitarCharge);
-  fill.style.background=`linear-gradient(to top,rgb(${r},${Math.floor(g2*.4)},0),rgb(${r},${g2},0),#fff)`;
 }
 
 function fireGuitar(){
-  if(!guitarReady||guitarFiring||!audioCtx)return;
+  if(guitarShots<=0||guitarFiring||!audioCtx)return;
   guitarFiring=true;guitarVolume=1.0;guitarLastFireTime=performance.now();
-  guitarCharge=0;guitarReady=false;guitarChargeMs=0;updateGuitarStrip();
+  guitarShots--;
+  guitarReady=guitarShots>0;
+  updateGuitarStrip();
   playGuitarStrike(1.2);
-  // Fire wide beam bullets
+  // Fire wide beam
   for(let d=-4;d<=4;d++){
     const a=d*.18,spd=14;
     bullets.push({x:ship.x,y:ship.y-20,vx:Math.sin(a)*spd,vy:-Math.cos(a)*spd,color:'#ff8800',size:6,guitar:true});
   }
-  // Always spawn a boss when guitar fires (if no boss active)
+  // Spawn boss when guitar fires (if none active)
   if(!boss)spawnBoss();
   setTimeout(()=>{guitarFiring=false;updateGuitarStrip();},300);
 }
@@ -1617,6 +1633,8 @@ function tickRadar(dt){
   const prev=radarAngle;
   radarAngle=(radarAngle+degsPerMs()*dt)%360;
   const cur=radarAngle;
+
+  // Beat circles
   activeBeatCircles.forEach(c=>{
     const target=((c.angle%360)+360)%360;
     let crossed=prev<=cur?target>=prev&&target<cur:target>=prev||target<cur;
@@ -1625,6 +1643,18 @@ function tickRadar(dt){
     const inProx=diff<tol;
     const key=c.id+'_'+c.angle;
     if((crossed||inProx)&&!radarTriggered[key]){radarTriggered[key]=true;playDrum(c.id);}
+    else if(!crossed&&!inProx)radarTriggered[key]=false;
+  });
+
+  // Alien radar slots — sweep hits their angle → play their drum
+  aliens.forEach(al=>{
+    const target=((al.radarAngleDeg%360)+360)%360;
+    let crossed=prev<=cur?target>=prev&&target<cur:target>=prev||target<cur;
+    const tol=Math.max(2,degsPerMs()*dt+.5);
+    const diff=Math.min(Math.abs(cur-target),360-Math.abs(cur-target));
+    const inProx=diff<tol;
+    const key='alien_'+al.id;
+    if((crossed||inProx)&&!radarTriggered[key]){radarTriggered[key]=true;playDrum(al.drumId);}
     else if(!crossed&&!inProx)radarTriggered[key]=false;
   });
 }
@@ -1640,10 +1670,14 @@ function drawMiniRadar(){
   mx.strokeStyle='rgba(0,255,255,.1)';mx.lineWidth=1;
   mx.beginPath();mx.arc(cx,cy,r,0,Math.PI*2);mx.stroke();
   mx.beginPath();mx.arc(cx,cy,r*.55,0,Math.PI*2);mx.stroke();
+
+  // Sweep trail + arm
   const sRad=(radarAngle-90)*Math.PI/180;
   for(let i=0;i<10;i++){const f=i/10,a=sRad-f*1.1;mx.beginPath();mx.moveTo(cx,cy);mx.arc(cx,cy,r*.95,a-.08,a,false);mx.closePath();mx.fillStyle=`rgba(0,255,255,${(1-f)*.14})`;mx.fill();}
   mx.strokeStyle='rgba(0,255,255,.85)';mx.lineWidth=1.5;mx.shadowColor='#0ff';mx.shadowBlur=6;
   mx.beginPath();mx.moveTo(cx,cy);mx.lineTo(cx+Math.cos(sRad)*(r-3),cy+Math.sin(sRad)*(r-3));mx.stroke();
+
+  // Beat circles
   activeBeatCircles.forEach(c=>{
     const a=(c.angle-90)*Math.PI/180,x=cx+Math.cos(a)*r*c.r,y=cy+Math.sin(a)*r*c.r;
     const col=drumColor(c.id),diff=Math.min(Math.abs(radarAngle-c.angle),360-Math.abs(radarAngle-c.angle));
@@ -1651,6 +1685,45 @@ function drawMiniRadar(){
     mx.fillStyle=hit?'#fff':col;mx.shadowColor=col;mx.shadowBlur=hit?10:3;
     mx.beginPath();mx.arc(x,y,hit?4:2.5,0,Math.PI*2);mx.fill();
   });
+
+  // Alien blips — show position mapped to radar polar coords
+  // Map world pos → angle/radius relative to ship, clamped to radar edge
+  aliens.forEach(al=>{
+    // Use their fixed radar slot angle + pulse when arm passes
+    const a=(al.radarAngleDeg-90)*Math.PI/180;
+    const x=cx+Math.cos(a)*r*al.radarRadius;
+    const y=cy+Math.sin(a)*r*al.radarRadius;
+    const diff=Math.min(Math.abs(radarAngle-al.radarAngleDeg),360-Math.abs(radarAngle-al.radarAngleDeg));
+    const hit=diff<7;
+    // Pulse brightness
+    const pulse=hit?1:0.55+0.35*Math.sin(Date.now()*0.006+al.id);
+    mx.save();
+    mx.globalAlpha=pulse;
+    mx.shadowColor=al.color;mx.shadowBlur=hit?14:5;
+    mx.fillStyle=hit?'#fff':al.color;
+    // Diamond shape for aliens
+    mx.beginPath();
+    const s=hit?5:3.5;
+    mx.moveTo(x,y-s);mx.lineTo(x+s,y);mx.lineTo(x,y+s);mx.lineTo(x-s,y);mx.closePath();
+    mx.fill();
+    // Label drum id
+    mx.font=`bold ${hit?6:5}px monospace`;mx.textAlign='center';mx.textBaseline='middle';
+    mx.fillStyle=hit?'#000':al.color;mx.globalAlpha=hit?1:0.5;
+    mx.fillText(al.drumId.slice(0,1).toUpperCase(),x,y);
+    mx.restore();
+  });
+
+  // Boss blip if active
+  if(boss){
+    const bAngle=((Math.atan2(boss.y-ship.y,boss.x-ship.x)*180/Math.PI)+90+360)%360;
+    const bDist=Math.min(.92,Math.hypot(boss.x-ship.x,boss.y-ship.y)/(Math.max(canvas.width,canvas.height)*.6));
+    const ba=(bAngle-90)*Math.PI/180;
+    const bx=cx+Math.cos(ba)*r*bDist,by=cy+Math.sin(ba)*r*bDist;
+    const bpulse=0.7+0.3*Math.sin(Date.now()*0.01);
+    mx.save();mx.globalAlpha=bpulse;mx.shadowColor='#f0f';mx.shadowBlur=12;mx.fillStyle='#f0f';
+    mx.beginPath();mx.arc(bx,by,5,0,Math.PI*2);mx.fill();mx.restore();
+  }
+
   mx.shadowBlur=0;
 }
 
@@ -1683,12 +1756,14 @@ function updateGame(){
   }
   if(fireCdA>0)fireCdA--;if(fireCdB>0)fireCdB--;
 
-  // Guitar strip charging
-  if(!guitarReady){
-    guitarChargeMs+=16.67;
-    guitarCharge=Math.min(1,guitarChargeMs/GUITAR_CHARGE_TIME);
-    if(guitarCharge>=1){guitarReady=true;guitarCharge=1;playGuitarPickup();}
-    updateGuitarStrip();
+  // Guitar: recharge one shot every 6 seconds
+  if(guitarShots<GUITAR_MAX_SHOTS){
+    guitarRechargeMs+=16.67;
+    if(guitarRechargeMs>=GUITAR_SHOT_RECHARGE_MS){
+      guitarRechargeMs=0;guitarShots++;
+      if(guitarShots===1)playGuitarPickup(); // chime when first shot restored from empty
+      updateGuitarStrip();
+    }
   }
 
   if(dpadActive){ship.vx=inputX*ship.speed;ship.vy=inputY*ship.speed;}
