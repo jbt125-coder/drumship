@@ -41,6 +41,14 @@ canvas{display:block;}
 .fire-btn.pressed{transform:scale(.92);filter:brightness(1.6);}
 .fire-label{font-size:1rem;margin-bottom:1px;}
 
+/* ── HEALTH BAR ── */
+#health-bar-wrap{position:absolute;bottom:0;left:50%;transform:translateX(-50%);width:180px;height:6px;background:rgba(255,255,255,.1);border-radius:3px;z-index:6;display:none;}
+#health-bar-fill{height:100%;width:100%;background:linear-gradient(to right,#0f8,#0ff);border-radius:3px;transition:width .1s;box-shadow:0 0 8px #0ff;}
+
+/* ── DOUBLE SHIP SHIELD ── */
+#companion-shield{display:none;position:absolute;top:50%;left:50%;width:60px;height:60px;border:2px solid #f44;border-radius:50%;transform:translate(-50%,-50%);pointer-events:none;z-index:4;box-shadow:0 0 14px #f44,inset 0 0 10px rgba(255,60,60,.3);animation:compShieldPulse .4s infinite alternate;}
+@keyframes compShieldPulse{from{opacity:.7;}to{opacity:1;}}
+
 /* ── LOOP SCREEN (shared by start + in-game tap) ── */
 #loop-screen{position:absolute;top:0;left:0;width:100vw;height:100vh;display:flex;flex-direction:column;align-items:center;justify-content:flex-start;padding:16px 0 12px;background:rgba(0,0,12,.96);z-index:20;overflow-y:auto;}
 #loop-screen.hidden{display:none;}
@@ -158,6 +166,8 @@ transition:box-shadow .05s;pointer-events:none;
 <canvas id="gameCanvas"></canvas>
 
 <div id="damage-flash"></div>
+<div id="health-bar-wrap"><div id="health-bar-fill"></div></div>
+<div id="companion-shield"></div>
 
 <!-- HUD -->
 
@@ -189,7 +199,7 @@ transition:box-shadow .05s;pointer-events:none;
 <div id="game-ui">
   <div id="dpad" class="control"><div id="dpad-stick"></div></div>
   <div id="fire-buttons">
-    <div id="fire-c" class="fire-btn control"><span class="fire-label">🔔</span><span>COWBELL</span></div>
+    <div id="fire-c" class="fire-btn control"><span class="fire-label">🔔</span><span id="cowbell-count">5</span></div>
     <div id="fire-b" class="fire-btn control"><span class="fire-label">⚡</span><span>BASS</span></div>
     <div id="fire-a" class="fire-btn control"><span class="fire-label">🔫</span><span>LASER</span></div>
   </div>
@@ -515,55 +525,80 @@ function playDrumAt(id,t){
   } else { g.disconnect(); }
 }
 
-// ── RUN DMC COWBELL BEAT (Peter Piper pattern) ──
-// Classic "tap tap TAP tap tap TAP" clave/cowbell rhythm
-const PETER_PIPER_PATTERN=[0, 0.125, 0.375, 0.5, 0.625, 0.875]; // 8th-note offsets in bar
-function playCowbellBeat(){
+// ── COWBELL — single hit per press, pitch rotates, 5 hits = shield ──
+const COWBELL_PITCHES=[480,520,560,500,540,460,580,510]; // slight pitch variation each hit
+let cowbellPitchIdx=0;
+let cowbellHitCount=0; // counts toward 5 for shield
+const COWBELL_SHIELD_DURATION=300;
+let cowbellShieldTimer=0;
+let cowbellShieldGravity=false; // true when shield is pulling things in
+let fireCdC=0;
+
+function playSingleCowbell(pitchBase){
   if(!audioCtx)return;
   const t=audioCtx.currentTime;
-  const barLen=60/radarBpm; // one beat in seconds
-  PETER_PIPER_PATTERN.forEach((offset,idx)=>{
-    const ht=t+offset*barLen*2; // spread over 2 beats
-    // Two-tone cowbell synthesis: 562Hz + 845Hz square waves through tight bandpass
-    const base=idx%3===2?540:520; // accented hits slightly lower pitched
-    const accent=idx%3===2;
-    const t1=audioCtx.createOscillator(),t2=audioCtx.createOscillator();
-    const bp1=audioCtx.createBiquadFilter(),bp2=audioCtx.createBiquadFilter();
-    const mix=audioCtx.createGain(),g=audioCtx.createGain();
-    t1.type='square';t1.frequency.value=base;
-    t2.type='square';t2.frequency.value=base*1.505;
-    bp1.type='bandpass';bp1.frequency.value=base;bp1.Q.value=4;
-    bp2.type='bandpass';bp2.frequency.value=base*1.505;bp2.Q.value=4;
-    mix.gain.value=0.9;
-    g.gain.setValueAtTime(accent?.75:.45,ht);
-    g.gain.exponentialRampToValueAtTime(.18,ht+.05);
-    g.gain.exponentialRampToValueAtTime(.001,ht+(accent?.55:.35));
-    t1.connect(bp1);bp1.connect(mix);
-    t2.connect(bp2);bp2.connect(mix);
-    mix.connect(g);g.connect(masterGain);
-    t1.start(ht);t1.stop(ht+.6);t2.start(ht);t2.stop(ht+.6);
-    t1.onended=()=>g.disconnect();
-  });
+  const t1=audioCtx.createOscillator(),t2=audioCtx.createOscillator();
+  const bp1=audioCtx.createBiquadFilter(),bp2=audioCtx.createBiquadFilter();
+  const mix=audioCtx.createGain(),g=audioCtx.createGain();
+  t1.type='square';t1.frequency.value=pitchBase;
+  t2.type='square';t2.frequency.value=pitchBase*1.505;
+  bp1.type='bandpass';bp1.frequency.value=pitchBase;bp1.Q.value=4.5;
+  bp2.type='bandpass';bp2.frequency.value=pitchBase*1.505;bp2.Q.value=4.5;
+  mix.gain.value=1;
+  g.gain.setValueAtTime(.7,t);
+  g.gain.exponentialRampToValueAtTime(.15,t+.04);
+  g.gain.exponentialRampToValueAtTime(.001,t+.6);
+  t1.connect(bp1);bp1.connect(mix);
+  t2.connect(bp2);bp2.connect(mix);
+  mix.connect(g);g.connect(masterGain);
+  t1.start(t);t1.stop(t+.65);t2.start(t);t2.stop(t+.65);
+  t1.onended=()=>g.disconnect();
 }
-
-// Cowbell shield — 5 second invincibility with teal glow
-const COWBELL_SHIELD_DURATION=300; // frames @ ~60fps
-let cowbellShieldTimer=0;
-let fireCdC=0;
 
 function doFireC(){
   if(gameState!=='PLAYING'||fireCdC>0)return;
-  fireCdC=180;
-  playCowbellBeat();
-  cowbellShieldTimer=COWBELL_SHIELD_DURATION;
-  document.getElementById('fire-c').classList.add('shielding');
-  setTimeout(()=>document.getElementById('fire-c').classList.remove('shielding'), COWBELL_SHIELD_DURATION*16.67);
+  fireCdC=18; // short cooldown so you can tap 5 times quickly
+  const pitch=COWBELL_PITCHES[cowbellPitchIdx%COWBELL_PITCHES.length];
+  cowbellPitchIdx++;
+  playSingleCowbell(pitch);
+  cowbellHitCount++;
+  const remaining=5-cowbellHitCount;
+  document.getElementById('cowbell-count').textContent=remaining>0?remaining:'★';
+  fireC.classList.add('pressed');setTimeout(()=>fireC.classList.remove('pressed'),80);
+  // Every 5 hits: activate shield with inward gravity pull
+  if(cowbellHitCount>=5){
+    cowbellHitCount=0;
+    document.getElementById('cowbell-count').textContent='5';
+    cowbellShieldTimer=COWBELL_SHIELD_DURATION;
+    cowbellShieldGravity=true;
+    fireC.classList.add('shielding');
+    setTimeout(()=>{fireC.classList.remove('shielding');cowbellShieldGravity=false;}, COWBELL_SHIELD_DURATION*16.67);
+    // Play a shield-on chord
+    [480,600,720].forEach((f,i)=>{
+      const o=audioCtx.createOscillator(),g2=audioCtx.createGain();
+      o.type='square';o.frequency.value=f;
+      const bp=audioCtx.createBiquadFilter();bp.type='bandpass';bp.frequency.value=f;bp.Q.value=3;
+      g2.gain.setValueAtTime(.5,audioCtx.currentTime+i*.04);
+      g2.gain.exponentialRampToValueAtTime(.001,audioCtx.currentTime+i*.04+.5);
+      o.connect(bp);bp.connect(g2);g2.connect(masterGain);
+      o.start(audioCtx.currentTime+i*.04);o.stop(audioCtx.currentTime+i*.04+.55);
+      o.onended=()=>g2.disconnect();
+    });
+  }
 }
+
+// Rotating scale for shot pitch variation
+const SHOT_SCALE=[1, 1.059, 1.122, 1.189, 1.260, 1.335, 1.414, 1.498, 1.587, 1.682, 1.782, 1.888];
+let laserPitchIdx=0, bassPitchIdx=0;
 
 function playLaserShot(){
   if(!audioCtx)return;
-  const t=audioCtx.currentTime,o=audioCtx.createOscillator(),g=audioCtx.createGain();
-  o.type='sawtooth';o.frequency.setValueAtTime(900,t);o.frequency.exponentialRampToValueAtTime(200,t+.12);
+  const t=audioCtx.currentTime;
+  const pitch=SHOT_SCALE[laserPitchIdx%SHOT_SCALE.length]; laserPitchIdx++;
+  const o=audioCtx.createOscillator(),g=audioCtx.createGain();
+  o.type='sawtooth';
+  o.frequency.setValueAtTime(900*pitch,t);
+  o.frequency.exponentialRampToValueAtTime(200*pitch,t+.12);
   g.gain.setValueAtTime(.35,t);g.gain.exponentialRampToValueAtTime(.001,t+.12);
   o.connect(g);g.connect(masterGain);o.start(t);o.stop(t+.14);o.onended=()=>g.disconnect();
   if(otoGain){otoGain.gain.setValueAtTime(0,t);otoGain.gain.setTargetAtTime(currentOtoVol(),t+.06,.04);}
@@ -571,10 +606,11 @@ function playLaserShot(){
 function playBassThud(){
   if(!audioCtx)return;
   const t=audioCtx.currentTime;
+  const pitch=SHOT_SCALE[bassPitchIdx%SHOT_SCALE.length]; bassPitchIdx++;
   const o=audioCtx.createOscillator(),s=audioCtx.createOscillator(),g=audioCtx.createGain(),sg=audioCtx.createGain();
-  o.type='square';o.frequency.setValueAtTime(120,t);o.frequency.exponentialRampToValueAtTime(40,t+.15);
+  o.type='square';o.frequency.setValueAtTime(120*pitch,t);o.frequency.exponentialRampToValueAtTime(40*pitch,t+.15);
   g.gain.setValueAtTime(.5,t);g.gain.exponentialRampToValueAtTime(.001,t+.2);
-  s.type='sine';s.frequency.setValueAtTime(60,t);s.frequency.exponentialRampToValueAtTime(20,t+.2);
+  s.type='sine';s.frequency.setValueAtTime(60*pitch,t);s.frequency.exponentialRampToValueAtTime(20*pitch,t+.2);
   sg.gain.setValueAtTime(.8,t);sg.gain.exponentialRampToValueAtTime(.001,t+.25);
   o.connect(g);g.connect(masterGain);s.connect(sg);sg.connect(masterGain);
   o.start(t);o.stop(t+.22);s.start(t);s.stop(t+.28);
@@ -658,6 +694,30 @@ function playAlienShoot(){
   o.type='sawtooth';o.frequency.setValueAtTime(600,t);o.frequency.exponentialRampToValueAtTime(150,t+.1);
   g.gain.setValueAtTime(.2,t);g.gain.exponentialRampToValueAtTime(.001,t+.1);
   o.connect(g);g.connect(masterGain);o.start(t);o.stop(t+.12);o.onended=()=>g.disconnect();
+}
+
+function playOrbExplosion(){
+  if(!audioCtx)return;
+  const t=audioCtx.currentTime;
+  // Deep bass thud
+  const o1=audioCtx.createOscillator(),g1=audioCtx.createGain();
+  o1.type='sine';o1.frequency.setValueAtTime(80,t);o1.frequency.exponentialRampToValueAtTime(18,t+.4);
+  g1.gain.setValueAtTime(1,t);g1.gain.exponentialRampToValueAtTime(.001,t+.5);
+  o1.connect(g1);g1.connect(masterGain);o1.start(t);o1.stop(t+.55);o1.onended=()=>g1.disconnect();
+  // Robot descending beep sequence
+  [0,.1,.18,.24].forEach((delay,i)=>{
+    const o2=audioCtx.createOscillator(),g2=audioCtx.createGain();
+    o2.type='square';o2.frequency.value=440-i*80;
+    g2.gain.setValueAtTime(.28,t+delay);g2.gain.exponentialRampToValueAtTime(.001,t+delay+.06);
+    o2.connect(g2);g2.connect(masterGain);o2.start(t+delay);o2.stop(t+delay+.08);o2.onended=()=>g2.disconnect();
+  });
+  // Metallic noise burst
+  const buf=audioCtx.createBuffer(1,audioCtx.sampleRate*.25,audioCtx.sampleRate);
+  const d=buf.getChannelData(0);for(let i=0;i<d.length;i++)d[i]=Math.random()*2-1;
+  const ns=audioCtx.createBufferSource();ns.buffer=buf;
+  const bf=audioCtx.createBiquadFilter();bf.type='bandpass';bf.frequency.value=2200;bf.Q.value=2;
+  const ng=audioCtx.createGain();ng.gain.setValueAtTime(.35,t);ng.gain.exponentialRampToValueAtTime(.001,t+.25);
+  ns.connect(bf);bf.connect(ng);ng.connect(masterGain);ns.start(t);ns.onended=()=>ng.disconnect();
 }
 
 // ── Asteroid sounds: size-based pitch ──
@@ -866,73 +926,130 @@ function makeGuitarCurve(){
   return curve;
 }
 
-// ── SCRATCH SOUND ──
-// Band-pass filtered noise sweep — pitch tracks drag velocity
-let scratchNode=null,scratchGainNode=null,scratchFilterNode=null;
+// ── SCRATCH — scrubs the rendered beat loop forward/backward ──
+let scratchBuf=null;
+let scratchGainNode=null,scratchFilterNode=null;
 let scratchActive=false,scratchY=0,scratchLastY=0,scratchVel=0;
-let scratchNeedleY=0.5; // 0..1 position in track
+let scratchNeedleY=0.5;
+let scratchPlayhead=0;
+let scratchScriptNode=null;
+
+function renderBeatBuffer(){
+  if(!audioCtx||!activeBeatCircles.length)return;
+  const barSecs=(60/radarBpm)*4;
+  const totalSecs=barSecs*2;
+  const sr=audioCtx.sampleRate;
+  const offCtx=new OfflineAudioContext(1,Math.ceil(totalSecs*sr),sr);
+  const offGain=offCtx.createGain();offGain.gain.value=0.9;offGain.connect(offCtx.destination);
+  for(let bar=0;bar<2;bar++){
+    activeBeatCircles.forEach(c=>{
+      const hitTime=(c.angle/360)*barSecs+bar*barSecs;
+      schedDrumOffline(offCtx,offGain,c.id,hitTime);
+    });
+  }
+  offCtx.startRendering().then(rendered=>{
+    const fwd=rendered.getChannelData(0);
+    const rev=new Float32Array(fwd.length);
+    for(let i=0;i<fwd.length;i++)rev[i]=fwd[fwd.length-1-i];
+    const out=audioCtx.createBuffer(2,fwd.length,sr);
+    out.copyToChannel(fwd,0);out.copyToChannel(rev,1);
+    scratchBuf=out;
+    scratchPlayhead=out.length/2;
+  }).catch(()=>{});
+}
+
+function schedDrumOffline(oc,dest,id,t){
+  const g=oc.createGain();g.connect(dest);
+  if(id==='kick'){
+    const o=oc.createOscillator();o.type='sine';
+    o.frequency.setValueAtTime(160,t);o.frequency.exponentialRampToValueAtTime(28,t+.09);
+    g.gain.setValueAtTime(1,t);g.gain.exponentialRampToValueAtTime(.001,t+.18);
+    o.connect(g);o.start(t);o.stop(t+.2);
+  } else if(id==='snare'){
+    const buf=oc.createBuffer(1,oc.sampleRate*.15,oc.sampleRate);
+    const d=buf.getChannelData(0);for(let i=0;i<d.length;i++)d[i]=Math.random()*2-1;
+    const s=oc.createBufferSource();s.buffer=buf;
+    const f=oc.createBiquadFilter();f.type='bandpass';f.frequency.value=900;
+    g.gain.setValueAtTime(.8,t);g.gain.exponentialRampToValueAtTime(.001,t+.18);
+    s.connect(f);f.connect(g);s.start(t);
+  } else if(id==='hat'){
+    const buf=oc.createBuffer(1,oc.sampleRate*.04,oc.sampleRate);
+    const d=buf.getChannelData(0);for(let i=0;i<d.length;i++)d[i]=Math.random()*2-1;
+    const s=oc.createBufferSource();s.buffer=buf;
+    const f=oc.createBiquadFilter();f.type='highpass';f.frequency.value=6000;
+    g.gain.setValueAtTime(.32,t);g.gain.exponentialRampToValueAtTime(.001,t+.05);
+    s.connect(f);f.connect(g);s.start(t);
+  } else {
+    const o=oc.createOscillator();o.type='triangle';
+    o.frequency.setValueAtTime(id==='clap'?900:id==='rim'?650:id==='tom'?180:450,t);
+    o.frequency.exponentialRampToValueAtTime(60,t+.1);
+    g.gain.setValueAtTime(.55,t);g.gain.exponentialRampToValueAtTime(.001,t+.14);
+    o.connect(g);o.start(t);o.stop(t+.15);
+  }
+}
 
 function startScratchAudio(){
-  if(scratchNode||!audioCtx)return;
-  // Vinyl scratch: long noise buffer with heavy EQ shaping
-  const bufLen=audioCtx.sampleRate*3;
-  const buf=audioCtx.createBuffer(1,bufLen,audioCtx.sampleRate);
-  const d=buf.getChannelData(0);
-  // Mix white noise with some low-frequency wobble for vinyl texture
-  for(let i=0;i<bufLen;i++){
-    const wobble=Math.sin(i/audioCtx.sampleRate*180)*0.3;
-    d[i]=(Math.random()*2-1)*0.7 + wobble*0.3;
+  if(!audioCtx)return;
+  // Set up gain + filter chain
+  if(!scratchGainNode){
+    scratchGainNode=audioCtx.createGain();scratchGainNode.gain.value=0;
+    scratchFilterNode=audioCtx.createBiquadFilter();
+    scratchFilterNode.type='peaking';scratchFilterNode.frequency.value=1400;
+    scratchFilterNode.gain.value=16;scratchFilterNode.Q.value=1.6;
+    const air=audioCtx.createBiquadFilter();air.type='highshelf';air.frequency.value=3500;air.gain.value=7;
+    const dist=audioCtx.createWaveShaper();
+    const curve=new Float32Array(512);
+    for(let i=0;i<512;i++){const x=i*2/512-1;curve[i]=Math.max(-0.75,Math.min(0.75,x*4));}
+    dist.curve=curve;
+    scratchGainNode.connect(scratchFilterNode);scratchFilterNode.connect(air);
+    air.connect(dist);dist.connect(masterGain);
   }
-  scratchNode=audioCtx.createBufferSource();scratchNode.buffer=buf;scratchNode.loop=true;
-  // Playback rate modulation gives the "wicky-wicky" pitch shift
-  scratchNode.playbackRate.value=1.0;
+  // Render the beat buffer (async, ready next touch)
+  renderBeatBuffer();
+}
 
-  // Stage 1: low cut to remove rumble
-  const hipass=audioCtx.createBiquadFilter();hipass.type='highpass';hipass.frequency.value=180;
+function startScratchPlayback(){
+  if(scratchScriptNode||!scratchBuf||!audioCtx)return;
+  const bufSize=512;
+  scratchScriptNode=audioCtx.createScriptProcessor(bufSize,0,1);
+  scratchScriptNode._spd=0;
+  scratchScriptNode.onaudioprocess=(e)=>{
+    const out=e.outputBuffer.getChannelData(0);
+    const spd=scratchScriptNode._spd;
+    const src=spd>=0?scratchBuf.getChannelData(0):scratchBuf.getChannelData(1);
+    const absSp=Math.abs(spd);
+    for(let i=0;i<bufSize;i++){
+      const idx=Math.floor(scratchPlayhead);
+      if(idx>=0&&idx<src.length-1){
+        const fr=scratchPlayhead-idx;
+        out[i]=src[idx]*(1-fr)+src[Math.min(idx+1,src.length-1)]*fr;
+      } else out[i]=0;
+      scratchPlayhead+=absSp;
+      if(scratchPlayhead>=scratchBuf.length)scratchPlayhead=0;
+      if(scratchPlayhead<0)scratchPlayhead=scratchBuf.length-1;
+    }
+  };
+  scratchScriptNode.connect(scratchGainNode);
+}
 
-  // Stage 2: presence peak — the nasal "wah" formant of a scratch
-  scratchFilterNode=audioCtx.createBiquadFilter();
-  scratchFilterNode.type='peaking';scratchFilterNode.frequency.value=1200;
-  scratchFilterNode.gain.value=18;scratchFilterNode.Q.value=1.8;
-
-  // Stage 3: high shelving air
-  const air=audioCtx.createBiquadFilter();air.type='highshelf';air.frequency.value=5000;air.gain.value=8;
-
-  // Stage 4: hard clip distortion for vinyl grit
-  const dist=audioCtx.createWaveShaper();
-  const curve=new Float32Array(512);
-  for(let i=0;i<512;i++){const x=i*2/512-1;curve[i]=Math.max(-0.7,Math.min(0.7,x*3.5));}
-  dist.curve=curve;
-
-  scratchGainNode=audioCtx.createGain();scratchGainNode.gain.value=0;
-
-  scratchNode.connect(hipass);hipass.connect(scratchFilterNode);
-  scratchFilterNode.connect(air);air.connect(dist);dist.connect(scratchGainNode);
-  scratchGainNode.connect(masterGain);
-  scratchNode.start();
+function stopScratchPlayback(){
+  if(scratchScriptNode){try{scratchScriptNode.disconnect();}catch(e){}scratchScriptNode=null;}
 }
 
 function updateScratchAudio(vel){
-  if(!audioCtx||!scratchGainNode||!scratchNode)return;
+  if(!audioCtx||!scratchGainNode)return;
   const t=audioCtx.currentTime;
-  const absVel=Math.abs(vel);
-  const vol=Math.min(1.0,absVel*.04);
-
-  // Playback rate: positive drag = forward play (higher pitch), negative = backward (lower pitch)
-  // This is the core of the vinyl scratch sound
-  const rate=Math.max(0.2,Math.min(3.5,1+vel*0.06));
-  scratchNode.playbackRate.setTargetAtTime(rate,t,.01);
-
-  // Formant center shifts with direction — "wah" vowel shape
-  const formantFreq=800+vel*22;
-  scratchFilterNode.frequency.setTargetAtTime(Math.max(300,Math.min(3500,formantFreq)),t,.012);
-
+  const vol=Math.min(1.0,Math.abs(vel)*.06);
+  const spd=(vel/25)*1.8; // samples/output-sample speed
+  if(scratchScriptNode)scratchScriptNode._spd=spd;
   scratchGainNode.gain.setTargetAtTime(vol,t,.01);
+  if(scratchFilterNode)scratchFilterNode.frequency.setTargetAtTime(
+    Math.max(500,Math.min(3000,1300+vel*20)),t,.014);
 }
 
 function stopScratchAudio(){
   if(!scratchGainNode)return;
-  scratchGainNode.gain.setTargetAtTime(0,audioCtx.currentTime,.04);
+  scratchGainNode.gain.setTargetAtTime(0,audioCtx.currentTime,.06);
 }
 
 // Scratch gravity state
@@ -967,6 +1084,15 @@ function drawStars(){
 let gameState='START';
 const MAX_LIVES=5;
 let lives,score,wave,powerup,powerupTimer,invincibleTimer;
+let health=1.0; // 0..1, regenerates
+const HEALTH_REGEN_RATE=0.0003; // per frame when not hit
+const HEALTH_HIT_COOLDOWN=180; // frames before regen starts after damage
+let healthRegenCooldown=0;
+
+// Companion ship (earned by killing orb alien)
+let companion=null; // {timer, shieldTimer, offset}
+const COMPANION_DURATION=7200; // 2 min @ 60fps
+const COMPANION_SHIELD_DURATION=1800; // 30 sec
 let particles=[],bullets=[],asteroids=[],powerupItems=[];
 let aliens=[];
 let alienBullets=[];
@@ -998,7 +1124,12 @@ function resetGame(){
   guitarShots=GUITAR_MAX_SHOTS;guitarRechargeMs=0;guitarReady=true;guitarFiring=false;guitarVolume=0;
   boss=null;bossSpawned=false;
   scratchGravity={x:0,y:0};scratchStrength=0;scratchVel=0;
-  cowbellShieldTimer=0;fireCdC=0;
+  cowbellShieldTimer=0;fireCdC=0;cowbellHitCount=0;cowbellShieldGravity=false;
+  laserPitchIdx=0;bassPitchIdx=0;cowbellPitchIdx=0;
+  document.getElementById('cowbell-count').textContent='5';
+  companion=null;health=1.0;healthRegenCooldown=0;
+  document.getElementById('companion-shield').style.display='none';
+  updateHealthBar();
   updateGuitarStrip();
   updateHUD();
 }
@@ -1026,15 +1157,19 @@ function spawnAlien(){
   else if(side===2){x=Math.random()*canvas.width;y=canvas.height+30;vx=(Math.random()-.5)*spd;vy=-spd*(.6+Math.random()*.4);}
   else{x=-30;y=Math.random()*canvas.height;vx=spd;vy=(Math.random()-.5)*spd*.5;}
   const id=alienIdCtr++;
-  // Assign a radar beat slot — unique angle so aliens don't pile up
-  const radarAngleDeg=Math.floor(Math.random()*24)*15; // 0,15,30..345
+  const radarAngleDeg=Math.floor(Math.random()*24)*15;
   const radarRadius=0.4+Math.random()*0.45;
   const alienDrums=['kick','snare','hat','clap','perc','rim','tom'];
   const drumId=alienDrums[id%alienDrums.length];
-  aliens.push({id,x,y,vx,vy,hp:2+Math.floor(wave/3),maxHp:2+Math.floor(wave/3),rot:0,size:14+Math.random()*8,
-    color:ALIEN_COLORS[id%ALIEN_COLORS.length],shootTimer:60+Math.floor(Math.random()*120),
+  // 33% chance orb type
+  const isOrb=Math.random()<0.33;
+  const type=isOrb?'orb':'diamond';
+  const color=isOrb?'#f44':'#'+ALIEN_COLORS[id%ALIEN_COLORS.length].slice(1);
+  const hp=isOrb?4+Math.floor(wave/2):2+Math.floor(wave/3);
+  aliens.push({id,type,x,y,vx,vy,hp,maxHp:hp,rot:0,size:isOrb?18+Math.random()*8:14+Math.random()*8,
+    color,shootTimer:60+Math.floor(Math.random()*120),
     soundTimer:30+Math.floor(Math.random()*60),hit:0,wobble:Math.random()*Math.PI*2,
-    radarAngleDeg, radarRadius, drumId});
+    radarAngleDeg,radarRadius,drumId});
 }
 
 function updateAliens(){
@@ -1062,39 +1197,51 @@ function updateAliens(){
         if(spd>4){al.vx=al.vx/spd*4;al.vy=al.vy/spd*4;}
       }
     }
-
-    // Shoot at player
-    al.shootTimer--;
-    if(al.shootTimer<=0){
-      const dx=ship.x-al.x,dy=ship.y-al.y,dist=Math.hypot(dx,dy);
-      const spd=3.5;
-      alienBullets.push({x:al.x,y:al.y,vx:(dx/dist)*spd,vy:(dy/dist)*spd,life:160,color:al.color});
-      playAlienShoot();
-      al.shootTimer=80+Math.floor(Math.random()*80);
+    // Cowbell shield gravity: pull aliens toward ship (gentle)
+    if(cowbellShieldGravity&&cowbellShieldTimer>0){
+      const sdx=ship.x-al.x,sdy=ship.y-al.y;
+      const sdist=Math.hypot(sdx,sdy)||1;
+      al.vx+=sdx/sdist*0.06;al.vy+=sdy/sdist*0.06;
+      const spd2=Math.hypot(al.vx,al.vy);
+      if(spd2>3.5){al.vx=al.vx/spd2*3.5;al.vy=al.vy/spd2*3.5;}
     }
 
-    // Remove if off screen
+    // Clamp scratch-boosted velocity before off-screen check
+    {const spd=Math.hypot(al.vx,al.vy);if(spd>5){al.vx=al.vx/spd*5;al.vy=al.vy/spd*5;}}
+
+    // Remove if off screen — just remove, don't recycle (avoids fast re-entry)
     const margin=80;
     if(al.x<-margin||al.x>canvas.width+margin||al.y<-margin||al.y>canvas.height+margin){
       aliens.splice(i,1);continue;
     }
 
-    // Draw alien ship
+    // Shoot at player
+    al.shootTimer--;
+    if(al.shootTimer<=0){
+      const dx=ship.x-al.x,dy=ship.y-al.y,dist=Math.hypot(dx,dy)||1;
+      const spd=al.type==='orb'?2.8:3.5;
+      alienBullets.push({x:al.x,y:al.y,vx:(dx/dist)*spd,vy:(dy/dist)*spd,life:160,color:al.color});
+      playAlienShoot();
+      al.shootTimer=(al.type==='orb'?120:80)+Math.floor(Math.random()*80);
+    }
     ctx.save();ctx.translate(al.x,al.y);ctx.rotate(al.rot);
     const col=al.hit>0?'#fff':al.color;
     ctx.strokeStyle=col;ctx.fillStyle=al.color+'22';ctx.lineWidth=2;
     ctx.shadowBlur=al.hit>0?20:8;ctx.shadowColor=col;
-    // Alien shape: diamond with wings
     const s=al.size;
-    ctx.beginPath();
-    ctx.moveTo(0,-s);ctx.lineTo(s*.6,0);ctx.lineTo(0,s*.6);ctx.lineTo(-s*.6,0);ctx.closePath();
-    ctx.fill();ctx.stroke();
-    // Wings
-    ctx.beginPath();ctx.moveTo(-s*.6,0);ctx.lineTo(-s*1.3,-s*.3);ctx.lineTo(-s*.8,s*.3);ctx.closePath();ctx.stroke();
-    ctx.beginPath();ctx.moveTo(s*.6,0);ctx.lineTo(s*1.3,-s*.3);ctx.lineTo(s*.8,s*.3);ctx.closePath();ctx.stroke();
-    // Core glow
-    ctx.fillStyle=col;ctx.shadowBlur=12;
-    ctx.beginPath();ctx.arc(0,0,s*.22,0,Math.PI*2);ctx.fill();
+    if(al.type==='orb'){
+      // Circle ship — rings + spokes
+      ctx.beginPath();ctx.arc(0,0,s,0,Math.PI*2);ctx.fill();ctx.stroke();
+      ctx.beginPath();ctx.arc(0,0,s*.58,0,Math.PI*2);ctx.stroke();
+      for(let sp=0;sp<6;sp++){const a2=sp*Math.PI/3;ctx.beginPath();ctx.moveTo(Math.cos(a2)*s*.25,Math.sin(a2)*s*.25);ctx.lineTo(Math.cos(a2)*s*.88,Math.sin(a2)*s*.88);ctx.stroke();}
+      ctx.fillStyle=col;ctx.shadowBlur=16;ctx.beginPath();ctx.arc(0,0,s*.2,0,Math.PI*2);ctx.fill();
+    } else {
+      // Diamond with wings
+      ctx.beginPath();ctx.moveTo(0,-s);ctx.lineTo(s*.6,0);ctx.lineTo(0,s*.6);ctx.lineTo(-s*.6,0);ctx.closePath();ctx.fill();ctx.stroke();
+      ctx.beginPath();ctx.moveTo(-s*.6,0);ctx.lineTo(-s*1.3,-s*.3);ctx.lineTo(-s*.8,s*.3);ctx.closePath();ctx.stroke();
+      ctx.beginPath();ctx.moveTo(s*.6,0);ctx.lineTo(s*1.3,-s*.3);ctx.lineTo(s*.8,s*.3);ctx.closePath();ctx.stroke();
+      ctx.fillStyle=col;ctx.shadowBlur=12;ctx.beginPath();ctx.arc(0,0,s*.22,0,Math.PI*2);ctx.fill();
+    }
     ctx.restore();ctx.shadowBlur=0;
 
     // HP bar
@@ -1110,10 +1257,11 @@ function updateAliens(){
       if(Math.hypot(bl.x-al.x,bl.y-al.y)<al.size+bl.size){
         al.hp--;al.hit=8;bullets.splice(b,1);
         if(al.hp<=0){
-          playAlienExplosion(al.x,al.y);
+          if(al.type==='orb'){playOrbExplosion();if(!companion)spawnCompanion();}
+          else playAlienExplosion(al.x,al.y);
           spawnParticles(al.x,al.y,al.color,14);
           spawnPowerup(al.x,al.y);
-          score+=100+wave*10;updateHUD();
+          score+=(al.type==='orb'?250:100)+wave*10;updateHUD();
           onAlienKilled();
           aliens.splice(i,1);
         }
@@ -1131,7 +1279,11 @@ function updateAliens(){
     ctx.beginPath();ctx.arc(bl.x,bl.y,3,0,Math.PI*2);ctx.fill();ctx.shadowBlur=0;
     // Hit player
     if(invincibleTimer===0&&powerup!=='shield'&&cowbellShieldTimer===0&&Math.hypot(bl.x-ship.x,bl.y-ship.y)<16){
-      alienBullets.splice(b,1);takeDamage();
+      alienBullets.splice(b,1);takeDamage();continue;
+    }
+    // Companion shield absorbs hit
+    if(companion&&companion.shieldTimer>0&&Math.hypot(bl.x-(ship.x+companion.offsetX),bl.y-ship.y)<22){
+      alienBullets.splice(b,1);spawnParticles(bl.x,bl.y,'#f44',3);continue;
     }
   }
 }
@@ -1214,7 +1366,10 @@ scratchTrack.addEventListener('pointerdown',e=>{
   updateNeedleVisual(scratchNeedleY);
   scratchNeedle.classList.add('active');
   scratchActive=true;
-  if(isAudioInit)startScratchAudio();
+  if(isAudioInit){
+    startScratchAudio();       // sets up gain/filter chain + renders beat buf if needed
+    startScratchPlayback();    // starts the ScriptProcessor scrubber
+  }
 },{passive:false});
 
 scratchTrack.addEventListener('pointermove',e=>{
@@ -1225,19 +1380,12 @@ scratchTrack.addEventListener('pointermove',e=>{
   scratchPrevClientY=e.clientY;
   scratchNeedleY=norm;
   updateNeedleVisual(norm);
-
-  // Velocity: pixels moved this frame — negative=up, positive=down
   scratchVel=dy;
   updateScratchAudio(dy);
-
-  // Gravity direction: dragging UP = pull ship upward & push asteroids away
-  //                    dragging DOWN = pull ship down & push asteroids away
-  // The "away from ship" push uses the scratch velocity magnitude
   const strength=Math.min(1,Math.abs(dy)*.08);
   scratchStrength=strength;
-  // Push direction: perpendicular scratch → apply vertical nudge to ship, radial push on asteroids
   scratchGravity.x=0;
-  scratchGravity.y=dy*.12; // ship pulled in direction of drag
+  scratchGravity.y=dy*.12;
 },{passive:false});
 
 ['pointerup','pointercancel'].forEach(ev=>{
@@ -1246,6 +1394,7 @@ scratchTrack.addEventListener('pointermove',e=>{
     scratchPointerId=null;scratchPrevClientY=null;scratchActive=false;
     scratchNeedle.classList.remove('active');
     stopScratchAudio();
+    stopScratchPlayback();
     scratchGravity.x=0;scratchGravity.y=0;scratchStrength=0;scratchVel=0;
   });
 });
@@ -1364,6 +1513,7 @@ function onAlienKilled(){
     const next=BEAT_LIBRARY[nextIdx]||BEAT_LIBRARY[0];
     activeBeatCircles=[...next.circles];
     radarBpm=next.bpm;
+    renderBeatBuffer(); // refresh scratch buffer to new beat
     radarTriggered={};
     // Flash mini radar
     const btn=document.getElementById('mini-radar-btn');
@@ -1429,11 +1579,13 @@ function closeLoopScreen(){
 
 document.getElementById('start-btn').addEventListener('click',()=>{
   initAudio();audioCtx.resume();startOtomatone();startEngine();closeLoopScreen();
+  setTimeout(renderBeatBuffer,200); // render after audioCtx is running
   document.getElementById('game-ui').style.display='flex';
   document.getElementById('hud').style.display='flex';
   document.getElementById('mini-radar-btn').style.display='block';
   document.getElementById('guitar-strip').style.display='flex';
   document.getElementById('scratch-strip').style.display='flex';
+  document.getElementById('health-bar-wrap').style.display='block';
   resetGame();spawnAsteroids();gameState='PLAYING';radarRunning=true;
 });
 document.getElementById('resume-btn').addEventListener('click',()=>{
@@ -1496,12 +1648,15 @@ function doFireA(){
   const spd=12;
   if(powerup==='spread'){for(let d=-2;d<=2;d++){const a=d*.22;bullets.push({x:ship.x,y:ship.y-20,vx:Math.sin(a)*spd,vy:-Math.cos(a)*spd,color:'#f09',size:4});}}
   else{bullets.push({x:ship.x-8,y:ship.y-14,vx:0,vy:-spd,color:'#f09',size:4});bullets.push({x:ship.x+8,y:ship.y-14,vx:0,vy:-spd,color:'#f09',size:4});}
+  // Companion fires too
+  if(companion){bullets.push({x:ship.x+companion.offsetX-8,y:ship.y-14,vx:0,vy:-spd,color:'#f88',size:4});bullets.push({x:ship.x+companion.offsetX+8,y:ship.y-14,vx:0,vy:-spd,color:'#f88',size:4});}
   fireA.classList.add('pressed');setTimeout(()=>fireA.classList.remove('pressed'),80);
 }
 function doFireB(){
   if(gameState!=='PLAYING'||fireCdB>0)return;
   fireCdB=powerup==='rapid'?8:18;playBassThud();
   const spd=9;[-0.5,0,.5].forEach(o=>bullets.push({x:ship.x,y:ship.y-15,vx:o*spd,vy:-spd*.95,color:'#fa0',size:7}));
+  if(companion){bullets.push({x:ship.x+companion.offsetX,y:ship.y-15,vx:0,vy:-spd*.95,color:'#f66',size:6});}
   fireB.classList.add('pressed');setTimeout(()=>fireB.classList.remove('pressed'),100);
 }
 fireA.addEventListener('touchstart',e=>{e.preventDefault();doFireA();},{passive:false});
@@ -1535,7 +1690,7 @@ function buildBeatGrid(){
     btn.addEventListener('click',()=>{
       initAudio();
       // Select this beat
-      activeBeatCircles=[...beat.circles];radarBpm=beat.bpm;
+      activeBeatCircles=[...beat.circles];radarBpm=beat.bpm;renderBeatBuffer();
       document.getElementById('seq-bpm-val').textContent=radarBpm;
       grid.querySelectorAll('.beat-btn').forEach(b=>{b.classList.remove('active');b.classList.remove('previewing');});
       btn.classList.add('active','previewing');
@@ -1709,10 +1864,10 @@ function clearBuilder(){builderCircles=[];drawBuilderRadar();}
 
 // Use builder as active beat when launching
 document.getElementById('start-btn').addEventListener('click',()=>{
-  if(currentTab==='builder'&&builderCircles.length>0)activeBeatCircles=[...builderCircles];
+  if(currentTab==='builder'&&builderCircles.length>0){activeBeatCircles=[...builderCircles];renderBeatBuffer();}
 },true);
 document.getElementById('resume-btn').addEventListener('click',()=>{
-  if(currentTab==='builder'&&builderCircles.length>0)activeBeatCircles=[...builderCircles];
+  if(currentTab==='builder'&&builderCircles.length>0){activeBeatCircles=[...builderCircles];renderBeatBuffer();}
 },true);
 
 // ════════════════════════════════════════════
@@ -1847,6 +2002,51 @@ function updateGame(){
   if(fireCdA>0)fireCdA--;if(fireCdB>0)fireCdB--;if(fireCdC>0)fireCdC--;
   if(cowbellShieldTimer>0)cowbellShieldTimer--;
 
+  // Health regen
+  if(healthRegenCooldown>0){healthRegenCooldown--;}
+  else if(health<1){health=Math.min(1,health+HEALTH_REGEN_RATE);updateHealthBar();}
+
+  // Companion ship — docked alongside player like Galaga double ship
+  if(companion){
+    companion.timer--;
+    if(companion.shieldTimer>0)companion.shieldTimer--;
+    if(companion.timer<=0){companion=null;document.getElementById('companion-shield').style.display='none';}
+    else{
+      // Lock position to right of ship, matching ship's exact position
+      const cx=ship.x+companion.offsetX;
+      const cy=ship.y;
+      companion.x=cx;companion.y=cy;
+      const hasShield=companion.shieldTimer>0;
+      const compFlash=invincibleTimer>0&&Math.floor(invincibleTimer/4)%2===0;
+      // Draw identical ship shape at companion position, same flash as player
+      if(!compFlash){
+        ctx.save();ctx.translate(cx,cy);
+        const sc=hasShield?'#f55':'#f99';
+        ctx.strokeStyle=sc;ctx.fillStyle='rgba(255,80,80,.1)';ctx.lineWidth=2;
+        ctx.shadowBlur=hasShield?18:10;ctx.shadowColor=sc;
+        // Exact same shape as player ship
+        ctx.beginPath();ctx.moveTo(0,-20);ctx.lineTo(15,10);ctx.lineTo(0,5);ctx.lineTo(-15,10);ctx.closePath();
+        ctx.fill();ctx.stroke();
+        // Engine glow when thrusting (mirrors player)
+        if(dpadActive){ctx.fillStyle=`rgba(255,140,100,${.4+.4*Math.random()})`;ctx.beginPath();ctx.ellipse(0,10,5,3+Math.random()*5,0,0,Math.PI*2);ctx.fill();}
+        // Red shield ring
+        if(hasShield){
+          const pulse=.5+.5*Math.sin(Date.now()*.018);
+          ctx.strokeStyle=`rgba(255,60,60,${.55+.35*pulse})`;ctx.lineWidth=2;
+          ctx.beginPath();ctx.arc(0,0,28,0,Math.PI*2);ctx.stroke();
+        }
+        ctx.restore();ctx.shadowBlur=0;
+      }
+      // Move the shield div to track companion (CSS ring effect)
+      const shDiv=document.getElementById('companion-shield');
+      if(hasShield){
+        shDiv.style.display='block';
+        shDiv.style.left=(cx-30)+'px';shDiv.style.top=(cy-30)+'px';
+        shDiv.style.transform='none';
+      } else {shDiv.style.display='none';}
+    }
+  } else {document.getElementById('companion-shield').style.display='none';}
+
   // Guitar: only recharges when fully empty, fills all 10 over 60 seconds
   if(guitarShots===0){
     guitarRechargeMs+=16.67;
@@ -1955,17 +2155,26 @@ function updateGame(){
     if(scratchStrength>0.05){
       const dx=ast.x-ship.x,dy=ast.y-ship.y;
       const dist=Math.hypot(dx,dy)||1;
-      const pushRadius=280; // only affects nearby asteroids
+      const pushRadius=280;
       if(dist<pushRadius){
         const force=scratchStrength*1.8*(1-dist/pushRadius);
-        ast.vx+=dx/dist*force;
-        ast.vy+=dy/dist*force;
-        // Speed cap so they don't fly off screen
+        ast.vx+=dx/dist*force;ast.vy+=dy/dist*force;
         const spd=Math.hypot(ast.vx,ast.vy);
         if(spd>2.5){ast.vx=ast.vx/spd*2.5;ast.vy=ast.vy/spd*2.5;}
       }
     }
+    // Cowbell shield gravity: pull asteroids toward ship
+    if(cowbellShieldGravity&&cowbellShieldTimer>0){
+      const dx=ship.x-ast.x,dy=ship.y-ast.y;
+      const dist=Math.hypot(dx,dy)||1;
+      // Gentle pull - much weaker than before
+      ast.vx+=dx/dist*0.04;ast.vy+=dy/dist*0.04;
+      // Cap so they don't go too fast
+      const spd2=Math.hypot(ast.vx,ast.vy);
+      if(spd2>1.2){ast.vx=ast.vx/spd2*1.2;ast.vy=ast.vy/spd2*1.2;}
+    }
     if(ast.x<-ast.size*2||ast.x>canvas.width+ast.size*2||ast.y<-ast.size*2||ast.y>canvas.height+ast.size*2){
+      // Always spawn fresh from edge with normal speed — never carry scratch velocity through
       asteroids.splice(a,1);asteroids.push(spawnEdgeAsteroid());continue;
     }
     ctx.save();ctx.translate(ast.x,ast.y);ctx.rotate(ast.rot);
@@ -2001,14 +2210,50 @@ function updateGame(){
   drawMiniRadar();
 }
 
+function updateHealthBar(){
+  const fill=document.getElementById('health-bar-fill');
+  if(fill){
+    fill.style.width=(health*100)+'%';
+    const r=Math.floor(255*(1-health)),g2=Math.floor(200*health);
+    fill.style.background=`linear-gradient(to right,rgb(${r},${g2},200),rgb(0,${g2},255))`;
+  }
+}
+
+function spawnCompanion(){
+  companion={
+    timer:COMPANION_DURATION,
+    shieldTimer:COMPANION_SHIELD_DURATION,
+    side:1,        // +1 = right side offset from player
+    offsetX:32,    // horizontal distance from ship center
+  };
+  // Play power-up docking fanfare
+  if(audioCtx){
+    const t=audioCtx.currentTime;
+    [261.6,329.6,392,523.3].forEach((f,i)=>{
+      const o=audioCtx.createOscillator(),g=audioCtx.createGain();
+      o.type='sine';o.frequency.value=f;
+      g.gain.setValueAtTime(.4,t+i*.1);g.gain.exponentialRampToValueAtTime(.001,t+i*.1+.2);
+      o.connect(g);g.connect(masterGain);o.start(t+i*.1);o.stop(t+i*.1+.25);o.onended=()=>g.disconnect();
+    });
+  }
+}
+
 function takeDamage(){
   if(invincibleTimer>0)return;
-  lives--;invincibleTimer=120;playDamageSound();spawnParticles(ship.x,ship.y,'#f00',10);
-  const fl=document.getElementById('damage-flash');fl.style.background='rgba(255,0,0,0.35)';
-  setTimeout(()=>fl.style.background='rgba(255,0,0,0)',120);updateHUD();
-  if(lives<=0){gameState='GAMEOVER';radarRunning=false;
-    document.getElementById('final-score').textContent=`SCORE: ${score} | WAVE: ${wave}`;
-    document.getElementById('gameover-ui').style.display='flex';}
+  health-=0.25;healthRegenCooldown=HEALTH_HIT_COOLDOWN;
+  if(health<=0){
+    health=0;lives--;invincibleTimer=120;playDamageSound();spawnParticles(ship.x,ship.y,'#f00',10);
+    const fl=document.getElementById('damage-flash');fl.style.background='rgba(255,0,0,0.35)';
+    setTimeout(()=>fl.style.background='rgba(255,0,0,0)',120);updateHUD();
+    if(lives<=0){gameState='GAMEOVER';radarRunning=false;
+      document.getElementById('final-score').textContent=`SCORE: ${score} | WAVE: ${wave}`;
+      document.getElementById('gameover-ui').style.display='flex';}
+  } else {
+    invincibleTimer=80;playDamageSound();spawnParticles(ship.x,ship.y,'#f00',5);
+    const fl=document.getElementById('damage-flash');fl.style.background='rgba(255,0,0,0.2)';
+    setTimeout(()=>fl.style.background='rgba(255,0,0,0)',80);
+  }
+  updateHealthBar();
 }
 
 // ════════════════════════════════════════════
