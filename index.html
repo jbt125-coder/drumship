@@ -284,6 +284,23 @@ transition:box-shadow .05s;pointer-events:none;
   <div id="boss-bar-outer"><div id="boss-bar-inner" style="width:100%"></div></div>
 </div>
 
+<!-- Mega Boss Bar -->
+
+<div id="mega-boss-bar-wrap" style="position:absolute;bottom:130px;left:50%;transform:translateX(-50%);width:min(420px,90vw);display:none;flex-direction:column;align-items:center;gap:3px;z-index:8;pointer-events:none;">
+  <div id="mega-boss-bar-label" style="font-family:'Orbitron',monospace;font-size:.55rem;color:#ff0;letter-spacing:.25em;text-shadow:0 0 10px #ff0,0 0 20px #f80;">⚠⚠ OMEGA TITAN ⚠⚠</div>
+  <div style="width:100%;height:14px;background:rgba(0,0,0,.7);border:1px solid rgba(255,200,0,.6);border-radius:7px;overflow:hidden;">
+    <div id="mega-boss-bar-inner" style="height:100%;background:linear-gradient(to right,#f00,#f80,#ff0);border-radius:7px;transition:width .15s;box-shadow:0 0 10px #f80;"></div>
+  </div>
+</div>
+
+<!-- Bonus Round Banner -->
+
+<div id="bonus-banner" style="position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);display:none;flex-direction:column;align-items:center;gap:10px;z-index:25;pointer-events:none;">
+  <div style="font-family:'Orbitron',monospace;font-size:2.2rem;font-weight:900;color:#ff0;text-shadow:0 0 30px #ff0,0 0 60px #f80;letter-spacing:.15em;animation:bonusPulse .5s infinite alternate;">BONUS ROUND!</div>
+  <div style="font-family:'Share Tech Mono',monospace;font-size:.8rem;color:#fff;letter-spacing:.2em;">UNLIMITED AMMO · SHOOT EVERYTHING</div>
+</div>
+<style>@keyframes bonusPulse{from{transform:scale(1);}to{transform:scale(1.06);}}</style>
+
 <div id="drag-ghost"></div>
 
 <script>
@@ -1114,6 +1131,9 @@ const GUITAR_SUSTAIN=5000;
 // Boss state
 let boss=null;
 let bossSpawned=false;
+let dreadnoughtKills=0; // track how many times Dreadnought has been defeated
+let megaBoss=null;      // the giant final boss after 3 Dreadnought kills
+let bonusRound=false;   // bonus shoot-em-up round after mega boss
 
 function resetGame(){
   lives=MAX_LIVES;score=0;wave=1;powerup=null;powerupTimer=0;invincibleTimer=0;
@@ -1122,7 +1142,7 @@ function resetGame(){
   ship.x=canvas.width/2;ship.y=canvas.height/2;ship.vx=0;ship.vy=0;
   radarTriggered={};
   guitarShots=GUITAR_MAX_SHOTS;guitarRechargeMs=0;guitarReady=true;guitarFiring=false;guitarVolume=0;
-  boss=null;bossSpawned=false;
+  boss=null;bossSpawned=false;dreadnoughtKills=0;megaBoss=null;bonusRound=false;
   scratchGravity={x:0,y:0};scratchStrength=0;scratchVel=0;
   cowbellShieldTimer=0;fireCdC=0;cowbellHitCount=0;cowbellShieldGravity=false;
   laserPitchIdx=0;bassPitchIdx=0;cowbellPitchIdx=0;
@@ -1139,7 +1159,12 @@ function updateHUD(){
   const ld=document.getElementById('lives-display');ld.innerHTML='';
   for(let i=0;i<MAX_LIVES;i++){const d=document.createElement('div');d.className='life-icon'+(i>=lives?' lost':'');ld.appendChild(d);}
   const pd=document.getElementById('powerup-display');
-  pd.textContent=(powerup&&powerupTimer>0)?({spread:'✦ SPREAD',rapid:'⚡ RAPID',shield:'🛡 SHIELD'}[powerup]||''):'';
+  let hudExtra='';
+  if(dreadnoughtKills>0&&dreadnoughtKills<3&&!megaBoss){
+    hudExtra=` · ${'💀'.repeat(dreadnoughtKills)}/3 DREAD`;
+  } else if(megaBoss){hudExtra=' · ⚠ OMEGA TITAN';}
+  else if(bonusRound){hudExtra=' · 🌟 BONUS!';}
+  pd.textContent=(powerup&&powerupTimer>0&&powerupTimer<99990)?({spread:'✦ SPREAD',rapid:'⚡ RAPID',shield:'🛡 SHIELD'}[powerup]||'')+hudExtra:hudExtra;
 }
 
 // ════════════════════════════════════════════
@@ -1185,18 +1210,24 @@ function updateAliens(){
     al.rot+=.04;
     if(al.hit>0)al.hit--;
 
-    // Scratch repulsion — same physics as asteroids
+    // Scratch repulsion — aliens wrap screen with speed boost
     if(scratchStrength>0.05){
       const sdx=al.x-ship.x,sdy=al.y-ship.y;
       const sdist=Math.hypot(sdx,sdy)||1;
       const pushRadius=320;
       if(sdist<pushRadius){
-        const force=scratchStrength*2.2*(1-sdist/pushRadius);
+        const force=scratchStrength*3.2*(1-sdist/pushRadius);
         al.vx+=sdx/sdist*force;al.vy+=sdy/sdist*force;
-        const spd=Math.hypot(al.vx,al.vy);
-        if(spd>4){al.vx=al.vx/spd*4;al.vy=al.vy/spd*4;}
+        al._scratchBoosted=true;
       }
     }
+    // Screen wrap for aliens with speed boost on edge cross
+    const alMargin=al.size+10;
+    if(al.x<-alMargin){al.x=canvas.width+alMargin; if(al._scratchBoosted){al.vx*=1.5;al.vy*=1.5;}}
+    else if(al.x>canvas.width+alMargin){al.x=-alMargin; if(al._scratchBoosted){al.vx*=1.5;al.vy*=1.5;}}
+    if(al.y<-alMargin){al.y=canvas.height+alMargin; if(al._scratchBoosted){al.vx*=1.5;al.vy*=1.5;}}
+    else if(al.y>canvas.height+alMargin){al.y=-alMargin; if(al._scratchBoosted){al.vx*=1.5;al.vy*=1.5;}}
+    {const spd=Math.hypot(al.vx,al.vy);if(spd>7){al.vx=al.vx/spd*7;al.vy=al.vy/spd*7;}}
     // Cowbell shield gravity: pull aliens toward ship (gentle)
     if(cowbellShieldGravity&&cowbellShieldTimer>0){
       const sdx=ship.x-al.x,sdy=ship.y-al.y;
@@ -1209,10 +1240,12 @@ function updateAliens(){
     // Clamp scratch-boosted velocity before off-screen check
     {const spd=Math.hypot(al.vx,al.vy);if(spd>5){al.vx=al.vx/spd*5;al.vy=al.vy/spd*5;}}
 
-    // Remove if off screen — just remove, don't recycle (avoids fast re-entry)
+    // Remove if way off screen AND not scratch-boosted (scratch-boosted ones wrap above)
+    if(!al._scratchBoosted){
     const margin=80;
     if(al.x<-margin||al.x>canvas.width+margin||al.y<-margin||al.y>canvas.height+margin){
       aliens.splice(i,1);continue;
+    }
     }
 
     // Shoot at player
@@ -1490,9 +1523,14 @@ function updateBoss(dt){
       boss.hp-=dmg;boss.hit=8;bullets.splice(b,1);
       if(boss.hp<=0){
         playAlienExplosion(boss.x,boss.y);spawnParticles(boss.x,boss.y,'#f0f',30);spawnParticles(boss.x,boss.y,'#ff0',20);
-        score+=2000+wave*100;updateHUD();boss=null;
+        score+=2000+wave*100;updateHUD();
+        dreadnoughtKills++;
+        boss=null;
         document.getElementById('boss-bar-wrap').style.display='none';
         playWaveClear();
+        if(dreadnoughtKills>=3&&!megaBoss){
+          setTimeout(()=>spawnMegaBoss(),2000);
+        }
       }
       break;
     }
@@ -1594,6 +1632,7 @@ document.getElementById('resume-btn').addEventListener('click',()=>{
 
 function restartGame(){
   document.getElementById('gameover-ui').style.display='none';
+  document.getElementById('gameover-ui').querySelector('h2').textContent='SHIP DESTROYED';
   resetGame();spawnAsteroids();gameState='PLAYING';radarRunning=true;
   closeLoopScreen();
 }
@@ -1973,6 +2012,276 @@ function drawMiniRadar(){
 }
 
 // ════════════════════════════════════════════
+//  MEGA BOSS — OMEGA TITAN
+// ════════════════════════════════════════════
+function playMegaBossIntro(){
+  if(!audioCtx)return;
+  const t=audioCtx.currentTime;
+  // Earth-shaking low chord
+  [27.5,36.7,55,73.4].forEach((freq,i)=>{
+    const o=audioCtx.createOscillator(),g=audioCtx.createGain();
+    o.type='sawtooth';o.frequency.value=freq;
+    const dist=audioCtx.createWaveShaper();dist.curve=makeDistCurve(350);
+    g.gain.setValueAtTime(.9,t+i*.06);g.gain.exponentialRampToValueAtTime(.001,t+i*.06+3);
+    o.connect(dist);dist.connect(g);g.connect(masterGain);
+    o.start(t+i*.06);o.stop(t+i*.06+3.2);o.onended=()=>g.disconnect();
+  });
+  // Alarm siren
+  for(let i=0;i<4;i++){
+    const o=audioCtx.createOscillator(),g=audioCtx.createGain();
+    o.type='square';o.frequency.setValueAtTime(220,t+i*.4);o.frequency.linearRampToValueAtTime(440,t+i*.4+.2);
+    g.gain.setValueAtTime(.18,t+i*.4);g.gain.exponentialRampToValueAtTime(.001,t+i*.4+.22);
+    o.connect(g);g.connect(masterGain);o.start(t+i*.4);o.stop(t+i*.4+.25);o.onended=()=>g.disconnect();
+  }
+}
+
+function spawnMegaBoss(){
+  if(megaBoss)return;
+  playMegaBossIntro();
+  // Flash screen
+  const fl=document.getElementById('damage-flash');
+  fl.style.background='rgba(255,200,0,0.55)';setTimeout(()=>fl.style.background='',300);
+  megaBoss={
+    x:canvas.width/2, y:-120,
+    targetX:canvas.width/2, targetY:canvas.height*.22,
+    vx:0, vy:2,
+    hp:400, maxHp:400,
+    size:90,          // huge
+    rot:0, wobble:0,
+    shootTimer:40, phase:0, hit:0,
+    orbitAngle:0,
+    // 4 mini-turrets orbiting the main body
+    turrets:[0,1,2,3].map(i=>({angle:i*Math.PI/2,hp:3,hit:0})),
+    color:'#ff0',
+    coreColor:'#f80',
+    shieldPulse:0,
+  };
+  document.getElementById('mega-boss-bar-wrap').style.display='flex';
+  // Flash the mini radar
+  const btn=document.getElementById('mini-radar-btn');
+  btn.style.filter='brightness(4) saturate(3)';setTimeout(()=>btn.style.filter='',500);
+}
+
+function updateMegaBoss(){
+  if(!megaBoss)return;
+  megaBoss.wobble+=.018;
+  megaBoss.rot+=.008;
+  megaBoss.orbitAngle+=.022;
+  megaBoss.hit=Math.max(0,megaBoss.hit-1);
+  megaBoss.shieldPulse+=.04;
+
+  // Move to target, then figure-8 patrol
+  const dx=megaBoss.targetX-megaBoss.x, dy=megaBoss.targetY-megaBoss.y;
+  const dist=Math.hypot(dx,dy);
+  if(dist>6){megaBoss.x+=dx*.012;megaBoss.y+=dy*.012;}
+  else{
+    const t=megaBoss.wobble;
+    megaBoss.targetX=canvas.width/2+Math.sin(t*.5)*canvas.width*.38;
+    megaBoss.targetY=canvas.height*.18+Math.sin(t)*(canvas.height*.14);
+  }
+
+  // Phase by HP
+  megaBoss.phase=megaBoss.hp<megaBoss.maxHp*.25?3:megaBoss.hp<megaBoss.maxHp*.5?2:megaBoss.hp<megaBoss.maxHp*.75?1:0;
+
+  // Shooting patterns
+  megaBoss.shootTimer--;
+  if(megaBoss.shootTimer<=0){
+    const ang=Math.atan2(ship.y-megaBoss.y,ship.x-megaBoss.x);
+    if(megaBoss.phase===0){
+      // Slow aimed burst × 5
+      for(let i=-2;i<=2;i++){const a=ang+i*.18;alienBullets.push({x:megaBoss.x,y:megaBoss.y,vx:Math.cos(a)*3,vy:Math.sin(a)*3,life:260,color:'#ff0'});}
+      megaBoss.shootTimer=50;
+    } else if(megaBoss.phase===1){
+      // Double ring
+      for(let i=0;i<12;i++){const a=i*Math.PI/6;alienBullets.push({x:megaBoss.x,y:megaBoss.y,vx:Math.cos(a)*2.8,vy:Math.sin(a)*2.8,life:260,color:'#f80'});}
+      megaBoss.shootTimer=70;
+    } else if(megaBoss.phase===2){
+      // Spiral storm
+      for(let i=0;i<4;i++){const a=megaBoss.rot+i*Math.PI*.5;alienBullets.push({x:megaBoss.x,y:megaBoss.y,vx:Math.cos(a)*4.2,vy:Math.sin(a)*4.2,life:200,color:'#f00'});}
+      megaBoss.shootTimer=14;
+    } else {
+      // Phase 3: combined — aimed + ring + spiral simultaneously
+      for(let i=-1;i<=1;i++){const a=ang+i*.25;alienBullets.push({x:megaBoss.x,y:megaBoss.y,vx:Math.cos(a)*5,vy:Math.sin(a)*5,life:200,color:'#fff'});}
+      for(let i=0;i<8;i++){const a=i*Math.PI*.25+megaBoss.rot;alienBullets.push({x:megaBoss.x,y:megaBoss.y,vx:Math.cos(a)*3,vy:Math.sin(a)*3,life:200,color:'#f0f'});}
+      megaBoss.shootTimer=22;
+    }
+    // Turrets also shoot if alive
+    megaBoss.turrets.forEach((tr,ti)=>{
+      if(tr.hp<=0)return;
+      const ta=megaBoss.orbitAngle+ti*Math.PI*.5;
+      const tx=megaBoss.x+Math.cos(ta)*megaBoss.size*.72;
+      const ty=megaBoss.y+Math.sin(ta)*megaBoss.size*.72;
+      const a=Math.atan2(ship.y-ty,ship.x-tx);
+      alienBullets.push({x:tx,y:ty,vx:Math.cos(a)*3.8,vy:Math.sin(a)*3.8,life:200,color:'#0ff'});
+    });
+    playAlienShoot();
+  }
+
+  // DRAW MEGA BOSS
+  ctx.save();ctx.translate(megaBoss.x,megaBoss.y);ctx.rotate(megaBoss.rot);
+  const col=megaBoss.hit>0?'#fff':megaBoss.color;
+  const s=megaBoss.size;
+
+  // Outer shield ring — pulsing gold
+  const shieldAlpha=0.3+0.25*Math.sin(megaBoss.shieldPulse);
+  ctx.strokeStyle=`rgba(255,220,0,${shieldAlpha})`;ctx.lineWidth=4;ctx.shadowBlur=20;ctx.shadowColor='#ff0';
+  ctx.beginPath();ctx.arc(0,0,s+18,0,Math.PI*2);ctx.stroke();
+
+  // Outer hull — 12-pointed star
+  ctx.fillStyle=megaBoss.color+'18';ctx.strokeStyle=col;ctx.lineWidth=2.5;
+  ctx.shadowBlur=megaBoss.hit>0?35:16;ctx.shadowColor=col;
+  ctx.beginPath();
+  for(let i=0;i<12;i++){const a=i*Math.PI/6,r=s*(i%2===0?1:.6);
+    i===0?ctx.moveTo(Math.cos(a)*r,Math.sin(a)*r):ctx.lineTo(Math.cos(a)*r,Math.sin(a)*r);}
+  ctx.closePath();ctx.fill();ctx.stroke();
+
+  // Mid ring
+  ctx.beginPath();ctx.arc(0,0,s*.5,0,Math.PI*2);ctx.strokeStyle=col;ctx.lineWidth=2;ctx.stroke();
+
+  // Inner rings
+  ctx.beginPath();ctx.arc(0,0,s*.28,0,Math.PI*2);ctx.strokeStyle=megaBoss.coreColor;ctx.lineWidth=2.5;ctx.shadowColor=megaBoss.coreColor;ctx.shadowBlur=14;ctx.stroke();
+
+  // Blazing core
+  ctx.fillStyle=megaBoss.hit>0?'#fff':megaBoss.coreColor;ctx.shadowBlur=24;ctx.shadowColor=megaBoss.coreColor;
+  ctx.beginPath();ctx.arc(0,0,s*.14,0,Math.PI*2);ctx.fill();
+
+  // Spokes
+  for(let i=0;i<6;i++){const a=i*Math.PI/3;ctx.beginPath();ctx.moveTo(Math.cos(a)*s*.28,Math.sin(a)*s*.28);ctx.lineTo(Math.cos(a)*s*.88,Math.sin(a)*s*.88);ctx.strokeStyle=col;ctx.lineWidth=1.5;ctx.shadowBlur=4;ctx.stroke();}
+
+  ctx.restore();ctx.shadowBlur=0;
+
+  // Orbiting turrets
+  megaBoss.turrets.forEach((tr,ti)=>{
+    if(tr.hp<=0)return;
+    tr.hit=Math.max(0,(tr.hit||0)-1);
+    const ta=megaBoss.orbitAngle+ti*Math.PI*.5;
+    const tx=megaBoss.x+Math.cos(ta)*s*.72;
+    const ty=megaBoss.y+Math.sin(ta)*s*.72;
+    const tcol=tr.hit>0?'#fff':'#0ff';
+    ctx.save();ctx.translate(tx,ty);ctx.rotate(megaBoss.orbitAngle*2);
+    ctx.strokeStyle=tcol;ctx.fillStyle='rgba(0,255,255,.15)';ctx.lineWidth=2;
+    ctx.shadowBlur=tr.hit>0?18:8;ctx.shadowColor=tcol;
+    ctx.beginPath();
+    for(let i=0;i<6;i++){const a=i*Math.PI/3,r=12*(i%2===0?1:.6);i===0?ctx.moveTo(Math.cos(a)*r,Math.sin(a)*r):ctx.lineTo(Math.cos(a)*r,Math.sin(a)*r);}
+    ctx.closePath();ctx.fill();ctx.stroke();
+    ctx.fillStyle=tcol;ctx.beginPath();ctx.arc(0,0,3,0,Math.PI*2);ctx.fill();
+    ctx.restore();ctx.shadowBlur=0;
+  });
+
+  // HP bar (mega)
+  document.getElementById('mega-boss-bar-inner').style.width=(megaBoss.hp/megaBoss.maxHp*100)+'%';
+
+  // Bullet collision with mega boss
+  for(let b=bullets.length-1;b>=0;b--){
+    const bl=bullets[b];
+    // Check turrets first
+    let hit=false;
+    megaBoss.turrets.forEach((tr,ti)=>{
+      if(hit||tr.hp<=0)return;
+      const ta=megaBoss.orbitAngle+ti*Math.PI*.5;
+      const tx=megaBoss.x+Math.cos(ta)*megaBoss.size*.72;
+      const ty=megaBoss.y+Math.sin(ta)*megaBoss.size*.72;
+      if(Math.hypot(bl.x-tx,bl.y-ty)<14+bl.size){
+        tr.hp--;tr.hit=10;hit=true;bullets.splice(b,1);
+        spawnParticles(tx,ty,'#0ff',4);
+        if(tr.hp<=0)spawnParticles(tx,ty,'#fff',8);
+      }
+    });
+    if(hit)continue;
+    if(Math.hypot(bl.x-megaBoss.x,bl.y-megaBoss.y)<megaBoss.size+bl.size){
+      const dmg=bl.guitar?18:1;
+      megaBoss.hp-=dmg;megaBoss.hit=8;bullets.splice(b,1);
+      spawnParticles(bl.x,bl.y,megaBoss.color,3);
+      if(megaBoss.hp<=0){
+        // MEGA BOSS DEATH — spectacular
+        for(let e=0;e<5;e++)setTimeout(()=>{
+          spawnParticles(megaBoss?megaBoss.x:canvas.width/2,megaBoss?megaBoss.y:canvas.height/2,'#ff0',25);
+          spawnParticles(megaBoss?megaBoss.x:canvas.width/2,megaBoss?megaBoss.y:canvas.height/2,'#f0f',20);
+          playAlienExplosion(canvas.width/2,canvas.height/2);
+        },e*180);
+        score+=10000+wave*500;updateHUD();
+        megaBoss=null;
+        document.getElementById('mega-boss-bar-wrap').style.display='none';
+        playWaveClear();
+        setTimeout(startBonusRound,2200);
+      }
+      break;
+    }
+  }
+  // Player collision with mega boss
+  if(megaBoss&&invincibleTimer===0&&powerup!=='shield'&&Math.hypot(megaBoss.x-ship.x,megaBoss.y-ship.y)<megaBoss.size+14)takeDamage();
+}
+
+// ════════════════════════════════════════════
+//  BONUS ROUND
+// ════════════════════════════════════════════
+let bonusRoundTimer=0;
+const BONUS_ROUND_DURATION=3600; // 60 seconds at 60fps
+let bonusSpawnTimer=0;
+
+function startBonusRound(){
+  bonusRound=true;
+  bonusRoundTimer=BONUS_ROUND_DURATION;
+  // Unlimited shots + powerup spread+rapid
+  powerup='spread';powerupTimer=99999;
+  // Clear screen of current asteroids/aliens then flood with stuff
+  asteroids.length=0;aliens.length=0;alienBullets.length=0;
+  for(let i=0;i<16;i++)asteroids.push(spawnEdgeAsteroid());
+  // Show banner
+  const banner=document.getElementById('bonus-banner');
+  banner.style.display='flex';
+  setTimeout(()=>banner.style.display='none',3500);
+  // Flash
+  const fl=document.getElementById('damage-flash');
+  fl.style.background='rgba(255,220,0,0.4)';setTimeout(()=>fl.style.background='',400);
+  // Fanfare
+  if(audioCtx){
+    const t=audioCtx.currentTime;
+    [523.3,659.3,783.9,1046.5,1318.5].forEach((f,i)=>{
+      const o=audioCtx.createOscillator(),g=audioCtx.createGain();
+      o.type='sine';o.frequency.value=f;
+      g.gain.setValueAtTime(.4,t+i*.07);g.gain.exponentialRampToValueAtTime(.001,t+i*.07+.25);
+      o.connect(g);g.connect(masterGain);o.start(t+i*.07);o.stop(t+i*.07+.28);o.onended=()=>g.disconnect();
+    });
+  }
+  // Auto-fire laser in bonus round (fire every 4 frames)
+  fireCdA=0;
+}
+
+function updateBonusRound(){
+  if(!bonusRound)return;
+  bonusRoundTimer--;
+  bonusSpawnTimer++;
+  // Flood of asteroids — spawn aggressively, fast, colourful
+  if(bonusSpawnTimer%12===0&&asteroids.length<35){
+    const a=spawnEdgeAsteroid();
+    a.vx*=2+Math.random()*2;a.vy*=2+Math.random()*2; // faster
+    a.color=`hsl(${Math.random()*360},100%,65%)`;      // rainbow
+    asteroids.push(a);
+  }
+  // Also spam aliens
+  if(bonusSpawnTimer%30===0&&aliens.length<10){spawnAlien();}
+  // Auto-fire for bonus round fun
+  if(bonusRoundTimer%3===0)doFireA();
+  if(bonusRoundTimer%7===0)doFireB();
+  // Bonus score multiplier flash HUD
+  if(bonusRoundTimer%60===0){
+    score+=50; // trickle bonus
+    updateHUD();
+  }
+  // End of bonus round
+  if(bonusRoundTimer<=0){
+    bonusRound=false;
+    powerup=null;powerupTimer=0;
+    // Show game-over style summary
+    gameState='GAMEOVER';radarRunning=false;
+    document.getElementById('gameover-ui').querySelector('h2').textContent='BONUS COMPLETE!';
+    document.getElementById('final-score').textContent=`SCORE: ${score} | WAVE: ${wave}`;
+    document.getElementById('gameover-ui').style.display='flex';
+  }
+}
+
+// ════════════════════════════════════════════
 //  MAIN LOOP
 // ════════════════════════════════════════════
 let lastTs=0;
@@ -2151,18 +2460,24 @@ function updateGame(){
   for(let a=asteroids.length-1;a>=0;a--){
     const ast=asteroids[a];
     ast.x+=ast.vx;ast.y+=ast.vy;ast.rot+=ast.rotSpeed;
-    // Scratch repulsion: push asteroids radially away from ship
+    // Scratch repulsion: blast asteroids away — they wrap screen edges with boosted speed
     if(scratchStrength>0.05){
       const dx=ast.x-ship.x,dy=ast.y-ship.y;
       const dist=Math.hypot(dx,dy)||1;
       const pushRadius=280;
       if(dist<pushRadius){
-        const force=scratchStrength*1.8*(1-dist/pushRadius);
+        const force=scratchStrength*3.5*(1-dist/pushRadius);
         ast.vx+=dx/dist*force;ast.vy+=dy/dist*force;
-        const spd=Math.hypot(ast.vx,ast.vy);
-        if(spd>2.5){ast.vx=ast.vx/spd*2.5;ast.vy=ast.vy/spd*2.5;}
+        ast._scratchBoosted=true; // flag: keep speed boost after wrap
       }
     }
+    // Screen wrap for asteroids (mirrors ship wrapping)
+    if(ast.x<-ast.size){ast.x=canvas.width+ast.size; if(ast._scratchBoosted){ast.vx*=1.4;ast.vy*=1.4;}}
+    else if(ast.x>canvas.width+ast.size){ast.x=-ast.size; if(ast._scratchBoosted){ast.vx*=1.4;ast.vy*=1.4;}}
+    if(ast.y<-ast.size){ast.y=canvas.height+ast.size; if(ast._scratchBoosted){ast.vx*=1.4;ast.vy*=1.4;}}
+    else if(ast.y>canvas.height+ast.size){ast.y=-ast.size; if(ast._scratchBoosted){ast.vx*=1.4;ast.vy*=1.4;}}
+    // Hard cap so they don't go infinite
+    {const spd=Math.hypot(ast.vx,ast.vy);if(spd>8){ast.vx=ast.vx/spd*8;ast.vy=ast.vy/spd*8;}}
     // Cowbell shield gravity: pull asteroids toward ship
     if(cowbellShieldGravity&&cowbellShieldTimer>0){
       const dx=ship.x-ast.x,dy=ship.y-ast.y;
@@ -2173,8 +2488,8 @@ function updateGame(){
       const spd2=Math.hypot(ast.vx,ast.vy);
       if(spd2>1.2){ast.vx=ast.vx/spd2*1.2;ast.vy=ast.vy/spd2*1.2;}
     }
-    if(ast.x<-ast.size*2||ast.x>canvas.width+ast.size*2||ast.y<-ast.size*2||ast.y>canvas.height+ast.size*2){
-      // Always spawn fresh from edge with normal speed — never carry scratch velocity through
+    // Remove only if way off screen and not scratch-boosted (scratch-boosted ones wrap)
+    if(!ast._scratchBoosted&&(ast.x<-ast.size*3||ast.x>canvas.width+ast.size*3||ast.y<-ast.size*3||ast.y>canvas.height+ast.size*3)){
       asteroids.splice(a,1);asteroids.push(spawnEdgeAsteroid());continue;
     }
     ctx.save();ctx.translate(ast.x,ast.y);ctx.rotate(ast.rot);
@@ -2206,6 +2521,10 @@ function updateGame(){
   updateAliens();
   // Boss
   if(boss)updateBoss();
+  // Mega Boss
+  if(megaBoss)updateMegaBoss();
+  // Bonus Round
+  if(bonusRound)updateBonusRound();
 
   drawMiniRadar();
 }
