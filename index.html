@@ -378,6 +378,14 @@ let currentTab='library';
 const AudioCtx=window.AudioContext||window.webkitAudioContext;
 let audioCtx,otoOsc,otoGain,masterGain,isAudioInit=false;
 
+// Galaxy index declared early so audio functions can safely reference it
+let galaxyIndex=0;
+// Default galaxy inline so currentGalaxy is NEVER null from frame 1
+let currentGalaxy={name:'ANDROMEDA',starRGB:[200,220,255],bgR:5,bgG:5,bgB:16,
+  laser:'#f09',bass:'#fa0',bullet:'#f09',bassCol:'#fa0',
+  alien:['#ff3860','#a855f7','#f59e0b','#10b981','#3b82f6'],
+  radar:'#0ff',engine:'#0ff',hudC:'#0ff',bossC:'#f0f',megaC:'#ff0'};
+
 function initAudio(){
   if(isAudioInit)return;
   audioCtx=new AudioCtx();
@@ -607,11 +615,11 @@ let laserPitchIdx=0, bassPitchIdx=0;
 function playLaserShot(){
   if(!audioCtx)return;
   const t=audioCtx.currentTime;
-  // Galaxy 2: higher pitched zap; Galaxy 4: lower growl; others: standard
-  const baseFreq=galaxyIndex===1?1200:galaxyIndex===3?600:900;
+  const gi=typeof galaxyIndex!=='undefined'?galaxyIndex:0;
+  const baseFreq=gi===1?1200:gi===3?600:900;
   const pitch=SHOT_SCALE[laserPitchIdx%SHOT_SCALE.length]; laserPitchIdx++;
   const o=audioCtx.createOscillator(),g=audioCtx.createGain();
-  o.type=galaxyIndex===2?'triangle':galaxyIndex===4?'square':'sawtooth';
+  o.type=gi===2?'triangle':gi===4?'square':'sawtooth';
   o.frequency.setValueAtTime(baseFreq*pitch,t);
   o.frequency.exponentialRampToValueAtTime(200*pitch,t+.12);
   g.gain.setValueAtTime(.35,t);g.gain.exponentialRampToValueAtTime(.001,t+.12);
@@ -626,10 +634,10 @@ let bassPitchCycle=0; // 0-3
 function playBassThud(){
   if(!audioCtx)return;
   const t=audioCtx.currentTime;
-  const galaxyMult=galaxyIndex===1?1.5:galaxyIndex===2?0.7:galaxyIndex===3?1.2:galaxyIndex===4?0.6:galaxyIndex===5?1.8:galaxyIndex===6?0.9:1.0;
+  const gi=typeof galaxyIndex!=='undefined'?galaxyIndex:0;
+  const galaxyMult=gi===1?1.5:gi===2?0.7:gi===3?1.2:gi===4?0.6:gi===5?1.8:gi===6?0.9:1.0;
   const pitch=BASS_PITCH_STEPS[bassPitchCycle]*galaxyMult;
   bassPitchCycle=(bassPitchCycle+1)%4;
-  const col2=currentGalaxy.bassCol;
   const o=audioCtx.createOscillator(),s=audioCtx.createOscillator(),g=audioCtx.createGain(),sg=audioCtx.createGain();
   o.type='square';o.frequency.setValueAtTime(120*pitch,t);o.frequency.exponentialRampToValueAtTime(40*pitch,t+.15);
   g.gain.setValueAtTime(.5,t);g.gain.exponentialRampToValueAtTime(.001,t+.2);
@@ -1121,12 +1129,12 @@ const GALAXIES=[
    radar:'#c4f',engine:'#c4f',hudC:'#c4f',bossC:'#f0f',megaC:'#ff0'},
 ];
 
-let galaxyIndex=0;
-let currentGalaxy=GALAXIES[0];
+// Assign currentGalaxy now that GALAXIES is defined
+galaxyIndex=0;
+currentGalaxy=GALAXIES[0];
 
 function applyGalaxy(g){
   currentGalaxy=g;
-  // Update HUD colors dynamically
   document.querySelectorAll('.hud-value').forEach(el=>el.style.color=g.hudC);
   document.querySelectorAll('.hud-label').forEach(el=>el.style.color=`rgba(${g.starRGB[0]},${g.starRGB[1]},${g.starRGB[2]},.45)`);
   document.querySelectorAll('.life-icon:not(.lost)').forEach(el=>{el.style.background=g.hudC;el.style.boxShadow=`0 0 6px ${g.hudC}`;});
@@ -1136,7 +1144,8 @@ function applyGalaxy(g){
   document.getElementById('dpad').style.borderColor=`rgba(${g.starRGB[0]},${g.starRGB[1]},${g.starRGB[2]},.35)`;
   document.getElementById('dpad-stick').style.background=`rgba(${g.starRGB[0]},${g.starRGB[1]},${g.starRGB[2]},.7)`;
   document.getElementById('dpad-stick').style.boxShadow=`0 0 10px ${g.hudC}`;
-  document.getElementById('mini-radar-btn').querySelector('canvas').style.borderColor=`rgba(${g.starRGB[0]},${g.starRGB[1]},${g.starRGB[2]},.25)`;
+  const radarCanvas=document.getElementById('mini-radar-btn') && document.getElementById('mini-radar-btn').querySelector('canvas');
+  if(radarCanvas)radarCanvas.style.borderColor=`rgba(${g.starRGB[0]},${g.starRGB[1]},${g.starRGB[2]},.25)`;
   document.body.style.background=`rgb(${g.bgR},${g.bgG},${g.bgB})`;
 }
 
@@ -1296,8 +1305,14 @@ const GUITAR_SUSTAIN=5000;
 // Boss state
 let boss=null;
 let bossSpawned=false;
-let bonusShieldTimer=0;     // full invincibility shield in bonus round (30 sec = 1800 frames)
+let bonusShieldTimer=0;
 const BONUS_SHIELD_DURATION=1800;
+const BONUS_ROUND_DURATION=3600;
+let dreadnoughtKills=0;
+let megaBoss=null;
+let bonusRound=false;
+let bonusRoundTimer=0;
+let bonusSpawnTimer=0;
 
 function resetGame(){
   lives=MAX_LIVES;score=0;wave=1;powerup=null;powerupTimer=0;invincibleTimer=0;
@@ -1713,8 +1728,9 @@ function closeLoopScreen(){
 }
 
 document.getElementById('start-btn').addEventListener('click',()=>{
+  try {
   initAudio();audioCtx.resume();startOtomatone();startEngine();closeLoopScreen();
-  setTimeout(renderBeatBuffer,200); // render after audioCtx is running
+  setTimeout(renderBeatBuffer,200);
   document.getElementById('game-ui').style.display='flex';
   document.getElementById('hud').style.display='flex';
   document.getElementById('mini-radar-btn').style.display='block';
@@ -1722,6 +1738,9 @@ document.getElementById('start-btn').addEventListener('click',()=>{
   document.getElementById('scratch-strip').style.display='flex';
   document.getElementById('health-bar-wrap').style.display='block';
   resetGame();spawnAsteroids();gameState='PLAYING';radarRunning=true;
+  } catch(e) {
+    alert('LAUNCH ERROR: ' + e.message + '\n' + e.stack.split('\n').slice(0,4).join('\n'));
+  }
 });
 document.getElementById('resume-btn').addEventListener('click',()=>{
   closeLoopScreen();radarRunning=true;gameState='PLAYING';
@@ -2112,7 +2131,7 @@ function drawMiniRadar(){
 let lastTs=0;
 function update(ts){
   const dt=Math.min(ts-lastTs,50);lastTs=ts;
-  const g=currentGalaxy;
+  const g=currentGalaxy||{bgR:5,bgG:5,bgB:16,starRGB:[200,220,255]};
   ctx.fillStyle=`rgba(${g.bgR},${g.bgG},${g.bgB},.48)`;ctx.fillRect(0,0,canvas.width,canvas.height);
   if(gameState==='START'||gameState==='PAUSED'){
     drawStars();
@@ -2416,11 +2435,6 @@ function takeDamage(){
   updateHealthBar();
 }
 
-// ════════════════════════════════════════════
-//  GAME STATE ADD-ONS
-// ════════════════════════════════════════════
-let dreadnoughtKills=0;
-let megaBoss=null;
 // ════════════════════════════════════════════
 //  MEGA BOSS — OMEGA TITAN
 // ════════════════════════════════════════════
