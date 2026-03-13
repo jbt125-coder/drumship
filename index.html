@@ -55,6 +55,23 @@ canvas{display:block;}
 #loop-title{font-family:‘Orbitron’,monospace;font-weight:900;font-size:1.2rem;color:#0ff;text-shadow:0 0 18px #0ff;text-align:center;margin:0 0 2px;letter-spacing:.2em;}
 #loop-title span{color:#f0f;}
 .sub{color:rgba(0,255,255,.38);font-size:.58rem;letter-spacing:3px;text-align:center;margin-bottom:10px;text-transform:uppercase;}
+/* ── TITLE SCREEN ── */
+#title-screen{width:100%;display:flex;flex-direction:column;align-items:center;gap:0;}
+#game-title{font-family:‘Orbitron’,monospace;font-weight:900;font-size:2rem;color:#f0f;text-shadow:0 0 30px #f0f,0 0 60px #a0f;text-align:center;letter-spacing:.12em;margin:6px 0 2px;animation:titlePulse 2.5s ease-in-out infinite;}
+#game-subtitle{font-family:‘Share Tech Mono’,monospace;font-size:.6rem;color:rgba(0,255,255,.55);letter-spacing:.3em;text-transform:uppercase;margin-bottom:10px;}
+@keyframes titlePulse{0%,100%{text-shadow:0 0 20px #f0f,0 0 40px #a0f;}50%{text-shadow:0 0 40px #f0f,0 0 80px #f0f,0 0 120px #a0f;}}
+#leaderboard{width:90%;max-width:320px;border:1px solid rgba(255,0,255,.25);background:rgba(255,0,255,.04);border-radius:8px;padding:10px 14px;margin-bottom:10px;}
+#leaderboard-title{font-family:‘Orbitron’,monospace;font-size:.52rem;color:#f0f;letter-spacing:.2em;text-align:center;margin-bottom:8px;text-shadow:0 0 8px #f0f;}
+.lb-row{display:flex;align-items:center;gap:8px;padding:4px 0;border-bottom:1px solid rgba(255,0,255,.1);}
+.lb-row:last-child{border-bottom:none;}
+.lb-rank{font-family:‘Orbitron’,monospace;font-size:.55rem;color:rgba(255,0,255,.5);width:18px;text-align:center;}
+.lb-rank.gold{color:#ff0;text-shadow:0 0 8px #ff0;}
+.lb-rank.silver{color:#ccc;}
+.lb-rank.bronze{color:#f80;}
+.lb-initials{font-family:‘Orbitron’,monospace;font-size:.7rem;color:#0ff;width:36px;letter-spacing:.1em;}
+.lb-score{font-family:‘Share Tech Mono’,monospace;font-size:.65rem;color:#fff;flex:1;text-align:right;}
+.lb-rankname{font-family:‘Share Tech Mono’,monospace;font-size:.42rem;color:rgba(255,180,255,.5);text-align:right;min-width:90px;}
+#leaderboard-empty{font-family:‘Share Tech Mono’,monospace;font-size:.55rem;color:rgba(255,0,255,.3);text-align:center;padding:10px 0;letter-spacing:2px;}
 
 /* Tab bar */
 #loop-tabs{display:flex;gap:0;border:1px solid rgba(0,255,255,.2);border-radius:20px;overflow:hidden;margin-bottom:10px;}
@@ -216,6 +233,15 @@ transition:box-shadow .05s;pointer-events:none;
 <!-- Loop Screen (start + in-game) -->
 
 <div id="loop-screen">
+  <!-- Title screen section (hidden when paused) -->
+  <div id="title-screen">
+    <div id="game-title">ASTEROID JOCKEY</div>
+    <div id="game-subtitle">Sci-Fi Otoma-Shooter · Deep Bass</div>
+    <div id="leaderboard">
+      <div id="leaderboard-title">🏆 TOP PILOTS 🏆</div>
+      <div id="leaderboard-rows"><div id="leaderboard-empty">NO SCORES YET · BE THE FIRST</div></div>
+    </div>
+  </div>
   <div id="loop-title">RADAR BEAT <span>SEQUENCER</span></div>
   <p class="sub">Choose a beat · or build your own</p>
 
@@ -1789,11 +1815,15 @@ function openLoopScreen(){
   const ls=document.getElementById('loop-screen');
   ls.classList.remove('hidden');
   const wasPlaying=gameState==='PLAYING';
+  const titleScreen=document.getElementById('title-screen');
   if(wasPlaying){
     radarRunning=false;
+    titleScreen.style.display='none';
     document.getElementById('start-btn').style.display='none';
     document.getElementById('resume-btn').style.display='block';
   } else {
+    titleScreen.style.display='flex';
+    renderLeaderboard();
     document.getElementById('start-btn').style.display='block';
     document.getElementById('resume-btn').style.display='none';
   }
@@ -1836,25 +1866,50 @@ function getRank(){
   return'SPACE CADET';
 }
 
-// ── HIGH SCORE ──
-const HS_KEY='drumship_hs';
-function loadHighScore(){try{return JSON.parse(localStorage.getItem(HS_KEY))||{score:0,initials:'---'};}catch(e){return{score:0,initials:'---'};}}
-function saveHighScore(s,initials){try{localStorage.setItem(HS_KEY,JSON.stringify({score:s,initials:initials.toUpperCase().padEnd(3,'-').slice(0,3)}));}catch(e){}}
+// ── HIGH SCORE / LEADERBOARD ──
+const HS_KEY='drumship_hs_v2';
+function loadLeaderboard(){try{return JSON.parse(localStorage.getItem(HS_KEY))||[];}catch(e){return[];}}
+function saveToLeaderboard(s,initials,rank){
+  const lb=loadLeaderboard();
+  lb.push({score:s,initials:initials.toUpperCase().padEnd(3,'-').slice(0,3),rank});
+  lb.sort((a,b)=>b.score-a.score);
+  const top=lb.slice(0,5);
+  try{localStorage.setItem(HS_KEY,JSON.stringify(top));}catch(e){}
+  return top;
+}
+function loadHighScore(){
+  const lb=loadLeaderboard();
+  return lb.length>0?lb[0]:{score:0,initials:'---'};
+}
 
+function renderLeaderboard(){
+  const lb=loadLeaderboard();
+  const wrap=document.getElementById('leaderboard-rows');
+  if(!wrap)return;
+  if(lb.length===0){wrap.innerHTML='<div id="leaderboard-empty">NO SCORES YET · BE THE FIRST</div>';return;}
+  const medals=['🥇','🥈','🥉','4','5'];
+  const rankClasses=['gold','silver','bronze','',''];
+  wrap.innerHTML=lb.map((e,i)=>`
+    <div class="lb-row">
+      <div class="lb-rank ${rankClasses[i]}">${medals[i]}</div>
+      <div class="lb-initials">${e.initials}</div>
+      <div class="lb-score">${e.score.toLocaleString()}</div>
+      <div class="lb-rankname">${e.rank||''}</div>
+    </div>`).join('');
+}
 function showGameOver(){
   const hs=loadHighScore();
   const isNew=score>hs.score;
   const rank=getRank();
   document.getElementById('final-score').textContent=`SCORE: ${score.toLocaleString()} | WAVE: ${wave}`;
   document.getElementById('high-score-display').textContent=isNew?'🏆 NEW HIGH SCORE!':'';
-  // Show rank
   let rankEl=document.getElementById('rank-display');
   if(!rankEl){rankEl=document.createElement('div');rankEl.id='rank-display';rankEl.style.cssText='color:#f80;font-size:.9rem;letter-spacing:2px;font-family:\'Orbitron\',monospace;margin-top:2px;';document.getElementById('high-score-display').after(rankEl);}
   rankEl.textContent='⭐ '+rank+' ⭐';
-  document.getElementById('all-time-best').textContent=hs.score>0?`ALL-TIME BEST: ${hs.initials}  ${hs.score.toLocaleString()}`:'';
+  document.getElementById('all-time-best').textContent=hs.score>0?`BEST: ${hs.initials}  ${hs.score.toLocaleString()}`:'';
   const inp=document.getElementById('initials-input');
   inp.value=isNew?'':hs.initials.replace(/-/g,'');
-  document.getElementById('initials-row').style.display=isNew?'flex':'none';
+  document.getElementById('initials-row').style.display='flex';
   document.getElementById('share-btn').style.display='block';
   document.getElementById('share-confirm').textContent='';
 }
@@ -1862,22 +1917,19 @@ function showGameOver(){
 function shareScore(){
   const inp=document.getElementById('initials-input');
   const initials=(inp.value||'???').toUpperCase().slice(0,3);
-  const hs=loadHighScore();
-  const best=score>hs.score?score:hs.score;
-  const bestInitials=score>hs.score?initials:hs.initials;
-  if(score>hs.score)saveHighScore(score,initials);
-  const msg=`🚀 ${bestInitials} scored ${best.toLocaleString()} pts on Wave ${wave} as a ${getRank()} in Sci-Fi Otoma-Shooter! Can you beat it?\nhttps://jbt125-coder.github.io/drumship/`;
+  const rank=getRank();
+  saveToLeaderboard(score,initials,rank);
+  renderLeaderboard();
+  const msg=`🚀 ${initials} scored ${score.toLocaleString()} pts on Wave ${wave} as a ${rank} in Asteroid Jockey! Can you beat it?\nhttps://jbt125-coder.github.io/drumship/`;
   if(navigator.share){navigator.share({text:msg}).catch(()=>{});}
-  else{navigator.clipboard.writeText(msg).then(()=>{document.getElementById('share-confirm').textContent='✓ COPIED TO CLIPBOARD';}).catch(()=>{document.getElementById('share-confirm').textContent='Open Messages & paste!';}); }
+  else{navigator.clipboard.writeText(msg).then(()=>{document.getElementById('share-confirm').textContent='✓ COPIED TO CLIPBOARD';}).catch(()=>{document.getElementById('share-confirm').textContent='Open Messages & paste!';});}
 }
 
 function restartGame(){
-  // Save high score using entered initials before restarting
   const inp=document.getElementById('initials-input');
   const initials=(inp.value||'???').toUpperCase().slice(0,3);
-  const hs=loadHighScore();
-  if(score>hs.score)saveHighScore(score,initials);
-  // Stop death wail and restore otomatone/engine to silent ready state
+  const rank=getRank();
+  saveToLeaderboard(score,initials,rank);
   if(otoOsc&&otoGain){otoOsc.frequency.cancelScheduledValues(audioCtx.currentTime);otoGain.gain.cancelScheduledValues(audioCtx.currentTime);otoGain.gain.setTargetAtTime(0,audioCtx.currentTime,.05);}
   dpadActive=false;inputX=0;inputY=0;stick.style.transform='translate(0,0)';
   document.getElementById('gameover-ui').style.display='none';
@@ -2790,6 +2842,7 @@ function spawnBoss(){
 buildBeatGrid();
 buildDrumChips();
 switchTab('library');
+renderLeaderboard();
 animatePreview._last=performance.now();
 previewRaf=requestAnimationFrame(animatePreview);
 requestAnimationFrame(update);
