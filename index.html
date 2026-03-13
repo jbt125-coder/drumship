@@ -141,6 +141,21 @@ canvas{display:block;}
 #challenge-banner .cb-rank{font-family:‘Share Tech Mono’,monospace;font-size:.55rem;color:rgba(255,220,0,.6);letter-spacing:.1em;}
 #dreamlo-status{font-size:.55rem;color:rgba(0,255,100,.5);letter-spacing:1px;font-family:‘Share Tech Mono’,monospace;min-height:12px;text-align:center;}
 #all-time-best{color:#888;font-size:.7rem;letter-spacing:1px;font-family:‘Share Tech Mono’,monospace;min-height:14px;}
+/* ── MULTIPLAYER ── */
+#mp-menu{width:90%;max-width:320px;border:1px solid rgba(0,255,255,.25);background:rgba(0,255,255,.03);border-radius:8px;padding:12px 16px;margin-bottom:10px;display:none;flex-direction:column;align-items:center;gap:8px;}
+#mp-title{font-family:‘Orbitron’,monospace;font-size:.58rem;color:#0ff;letter-spacing:.2em;text-align:center;text-shadow:0 0 8px #0ff;}
+.mp-btn{font-family:‘Orbitron’,monospace;border:1.5px solid #0ff;color:#0ff;background:transparent;padding:8px 20px;font-size:.65rem;cursor:pointer;letter-spacing:2px;transition:all .2s;width:100%;}
+.mp-btn:hover,.mp-btn:active{background:#0ff;color:#000;}
+.mp-btn.yellow{border-color:#ff0;color:#ff0;}
+.mp-btn.yellow:hover,.mp-btn.yellow:active{background:#ff0;color:#000;}
+#mp-code-display{font-family:‘Orbitron’,monospace;font-size:1.1rem;color:#ff0;text-shadow:0 0 12px #ff0;letter-spacing:.08em;text-align:center;min-height:24px;}
+#mp-code-label{font-family:‘Share Tech Mono’,monospace;font-size:.52rem;color:rgba(0,255,255,.5);letter-spacing:2px;}
+#mp-join-row{display:none;flex-direction:column;align-items:center;gap:6px;width:100%;}
+#mp-join-input{background:transparent;border:none;border-bottom:2px solid #0ff;color:#0ff;font-family:‘Share Tech Mono’,monospace;font-size:.75rem;width:100%;text-align:center;outline:none;padding:4px 0;letter-spacing:.05em;}
+#mp-status{font-family:‘Share Tech Mono’,monospace;font-size:.55rem;color:rgba(0,255,255,.6);letter-spacing:1px;text-align:center;min-height:14px;}
+#mp-p2-indicator{position:absolute;top:8px;right:8px;font-family:‘Orbitron’,monospace;font-size:.5rem;color:#ff0;text-shadow:0 0 8px #ff0;display:none;z-index:15;letter-spacing:1px;}
+#multiplayer-btn{font-family:‘Orbitron’,monospace;border:1.5px solid #0ff;color:#0ff;background:transparent;padding:7px 18px;font-size:.62rem;cursor:pointer;letter-spacing:2px;transition:all .2s;margin-bottom:6px;}
+#multiplayer-btn:hover{background:rgba(0,255,255,.1);}
 
 /* ── GUITAR STRIP ── */
 #guitar-strip{position:absolute;left:0;top:50%;transform:translateY(-50%);width:52px;height:220px;display:none;flex-direction:column;align-items:center;justify-content:flex-end;gap:4px;z-index:12;pointer-events:auto;padding-bottom:6px;cursor:pointer;touch-action:manipulation;}
@@ -202,6 +217,7 @@ transition:box-shadow .05s;pointer-events:none;
 
 <!-- HUD -->
 
+<div id="mp-p2-indicator">P2 CONNECTED ●</div>
 <div id="hud">
   <div class="hud-block">
     <span class="hud-label">Score</span>
@@ -247,6 +263,22 @@ transition:box-shadow .05s;pointer-events:none;
       <div id="leaderboard-title">🏆 TOP PILOTS 🏆</div>
       <div id="leaderboard-rows"><div id="leaderboard-empty">NO SCORES YET · BE THE FIRST</div></div>
     </div>
+  </div>
+  <!-- Multiplayer button -->
+  <button id="multiplayer-btn" onclick="toggleMpMenu()">⚡ LOCAL MULTIPLAYER</button>
+  <!-- Multiplayer menu -->
+  <div id="mp-menu">
+    <div id="mp-title">👾 2-PLAYER LOCAL CO-OP</div>
+    <div id="mp-code-label">ROOM CODE</div>
+    <div id="mp-code-display">──────────</div>
+    <button class="mp-btn" onclick="mpHost()">📡 HOST GAME</button>
+    <div style="color:rgba(255,255,255,.2);font-size:.5rem;font-family:monospace;">── OR ──</div>
+    <div id="mp-join-row">
+      <input id="mp-join-input" placeholder="enter room code" autocomplete="off" spellcheck="false"/>
+      <button class="mp-btn yellow" onclick="mpJoin()">🎮 JOIN AS PLAYER 2</button>
+    </div>
+    <button class="mp-btn" style="display:none" onclick="mpJoinToggle()" id="mp-show-join-btn">🎮 JOIN A GAME</button>
+    <div id="mp-status"></div>
   </div>
   <div id="loop-title">RADAR BEAT <span>SEQUENCER</span></div>
   <p class="sub">Choose a beat · or build your own</p>
@@ -1885,7 +1917,7 @@ function getRank(){
 // ── DREAMLO GLOBAL LEADERBOARD ──
 const DREAMLO_PUBLIC  = '69b4825e8f40bb1b14b2f7ca';
 const DREAMLO_PRIVATE = '_8ttygvNXEGlBB_lrbOT9Ay3Ywrjov0EGFC-Cd3BtsFA';
-const DREAMLO_BASE    = 'http://dreamlo.com/lb/';
+const DREAMLO_BASE    = 'https://dreamlo.com/lb/';
 
 function dreamloPost(initials, sc, rank){
   const name=encodeURIComponent(initials+'|'+rank);
@@ -2112,11 +2144,10 @@ function doFireB(){
   if(companion){bullets.push({x:ship.x+companion.offsetX,y:ship.y-15,vx:0,vy:-spd*.95,color:currentGalaxy.bassCol,size:6});}
   fireB.classList.add('pressed');setTimeout(()=>fireB.classList.remove('pressed'),100);
 }
-fireA.addEventListener('touchstart',e=>{e.preventDefault();doFireA();},{passive:false});
-fireB.addEventListener('touchstart',e=>{e.preventDefault();doFireB();},{passive:false});
+// Fire listeners wired at boot (mp-aware versions override these)
 fireC.addEventListener('touchstart',e=>{e.preventDefault();doFireC();},{passive:false});
-fireA.addEventListener('mousedown',doFireA);fireB.addEventListener('mousedown',doFireB);fireC.addEventListener('mousedown',doFireC);
-window.addEventListener('keydown',e=>{if(e.code==='Space'||e.key==='z')doFireA();if(e.key==='x')doFireB();if(e.key==='c')doFireC();});
+fireC.addEventListener('mousedown',doFireC);
+window.addEventListener('keydown',e=>{if(e.code==='Space'||e.key==='z')doFireAmp();if(e.key==='x')doFireBmp();if(e.key==='c')doFireC();});
 
 // ════════════════════════════════════════════
 //  LOOP SCREEN TABS
@@ -2437,6 +2468,9 @@ function update(ts){
   } else if(gameState==='PLAYING'){
     handleKeyboard();tickRadar(dt);updateGame();
     if(warpActive)updateDrawWarp();
+    drawP2Ship();
+    mpGuestTick();
+    mpHostBroadcast();
   } else if(gameState==='GAMEOVER'){
     drawStars();tickRadar(dt);
   }
@@ -2950,6 +2984,243 @@ function spawnBoss(){
   document.getElementById('boss-bar-wrap').style.display='flex';
 }
 
+
+// ════════════════════════════════════════════
+//  MULTIPLAYER — WebRTC P2P
+// ════════════════════════════════════════════
+
+// ── Word-pair room code generator ──
+const MP_WORDS_A=['star','nova','void','dark','flux','warp','ion','hyper','solar','lunar','astro','orbit','pulse','laser','cyber','ultra','neon','turbo','alpha','omega'];
+const MP_WORDS_B=['commander','pilot','ranger','jockey','blaster','drifter','knight','ace','raider','hunter','ghost','striker','falcon','titan','corsair','specter','viper','phoenix','hawk','wolf'];
+function genRoomCode(){
+  const a=MP_WORDS_A[Math.floor(Math.random()*MP_WORDS_A.length)];
+  const b=MP_WORDS_B[Math.floor(Math.random()*MP_WORDS_B.length)];
+  const n=1+Math.floor(Math.random()*99);
+  return a+b+n;
+}
+
+// ── P2 state ──
+let p2={x:0,y:0,vx:0,vy:0,active:false,invTimer:0,hit:0,fireA:false,fireB:false,score:0};
+let mpMode=null; // null | 'host' | 'guest'
+let mpConn=null; // RTCPeerConnection
+let mpChannel=null; // RTCDataChannel
+let mpRoomCode='';
+let mpConnected=false;
+
+// ── P2 sounds (different pitches/timbres from P1) ──
+function p2FireA(){
+  if(!audioCtx)return;
+  const t=audioCtx.currentTime,o=audioCtx.createOscillator(),g=audioCtx.createGain();
+  o.type='square';o.frequency.setValueAtTime(600,t);o.frequency.exponentialRampToValueAtTime(300,t+.08);
+  g.gain.setValueAtTime(.18,t);g.gain.exponentialRampToValueAtTime(.001,t+.1);
+  o.connect(g);g.connect(masterGain);o.start(t);o.stop(t+.12);o.onended=()=>g.disconnect();
+}
+function p2FireB(){
+  if(!audioCtx)return;
+  const t=audioCtx.currentTime,o=audioCtx.createOscillator(),g=audioCtx.createGain();
+  o.type='triangle';o.frequency.setValueAtTime(180,t);o.frequency.exponentialRampToValueAtTime(60,t+.2);
+  g.gain.setValueAtTime(.3,t);g.gain.exponentialRampToValueAtTime(.001,t+.22);
+  o.connect(g);g.connect(masterGain);o.start(t);o.stop(t+.25);o.onended=()=>g.disconnect();
+}
+function p2Hit(){
+  if(!audioCtx)return;
+  const t=audioCtx.currentTime,o=audioCtx.createOscillator(),g=audioCtx.createGain();
+  o.type='sawtooth';o.frequency.setValueAtTime(400,t);o.frequency.exponentialRampToValueAtTime(100,t+.15);
+  g.gain.setValueAtTime(.25,t);g.gain.exponentialRampToValueAtTime(.001,t+.18);
+  o.connect(g);g.connect(masterGain);o.start(t);o.stop(t+.2);o.onended=()=>g.disconnect();
+}
+
+// ── Draw P2 ship (boxy yellow) ──
+function drawP2Ship(){
+  if(!p2.active||!mpConnected)return;
+  const flash=p2.invTimer>0&&Math.floor(p2.invTimer/4)%2===0;
+  if(flash)return;
+  const hitFlash=p2.hit>0&&Math.floor(p2.hit/3)%2===0;
+  if(hitFlash)return;
+  ctx.save();ctx.translate(p2.x,p2.y);
+  const col='#ffe000';
+  ctx.strokeStyle=col;ctx.fillStyle='rgba(255,220,0,.12)';ctx.lineWidth=2;
+  ctx.shadowBlur=14;ctx.shadowColor=col;
+  // Boxy shape — rectangular body with wing stubs
+  ctx.beginPath();
+  ctx.moveTo(-10,-18);ctx.lineTo(10,-18);  // top
+  ctx.lineTo(14,-8); ctx.lineTo(14,4);     // right side
+  ctx.lineTo(20,10); ctx.lineTo(14,10);    // right wing
+  ctx.lineTo(10,16); ctx.lineTo(-10,16);   // bottom
+  ctx.lineTo(-14,10);ctx.lineTo(-20,10);   // left wing
+  ctx.lineTo(-14,4); ctx.lineTo(-14,-8);   // left side
+  ctx.closePath();
+  ctx.fill();ctx.stroke();
+  // Cockpit window
+  ctx.fillStyle='rgba(255,240,100,.35)';ctx.strokeStyle='rgba(255,220,0,.6)';ctx.lineWidth=1;
+  ctx.beginPath();ctx.rect(-5,-14,10,8);ctx.fill();ctx.stroke();
+  // Engine glow
+  if(Math.hypot(p2.vx,p2.vy)>0.5){
+    ctx.fillStyle=`rgba(255,180,0,${.5+.4*Math.random()})`;
+    ctx.beginPath();ctx.ellipse(0,18,4,3+Math.random()*5,0,0,Math.PI*2);ctx.fill();
+  }
+  // P2 label
+  ctx.fillStyle='rgba(255,220,0,.7)';ctx.font='bold 8px monospace';ctx.textAlign='center';ctx.textBaseline='middle';
+  ctx.fillText('P2',-24,-14);
+  ctx.restore();ctx.shadowBlur=0;
+}
+
+// ── WebRTC signaling via URL hash (no server needed) ──
+// Host encodes offer in URL hash; guest reads it, connects, encodes answer back
+// For simplicity we use a free signaling helper: peerjs.com CDN
+
+function mpSetStatus(msg){document.getElementById('mp-status').textContent=msg;}
+
+function toggleMpMenu(){
+  const m=document.getElementById('mp-menu');
+  const showing=m.style.display==='flex';
+  m.style.display=showing?'none':'flex';
+  if(!showing){
+    document.getElementById('mp-show-join-btn').style.display='block';
+    document.getElementById('mp-join-row').style.display='none';
+  }
+}
+function mpJoinToggle(){
+  document.getElementById('mp-join-row').style.display='flex';
+  document.getElementById('mp-show-join-btn').style.display='none';
+  document.getElementById('mp-join-input').focus();
+}
+
+// ── PeerJS-based connection ──
+let peer=null;
+
+function loadPeerJS(cb){
+  if(window.Peer){cb();return;}
+  const s=document.createElement('script');
+  s.src='https://unpkg.com/peerjs@1.5.1/dist/peerjs.min.js';
+  s.onload=cb;document.head.appendChild(s);
+}
+
+function mpHost(){
+  mpRoomCode=genRoomCode();
+  document.getElementById('mp-code-display').textContent=mpRoomCode;
+  mpSetStatus('Loading...');
+  loadPeerJS(()=>{
+    peer=new Peer(mpRoomCode);
+    peer.on('open',()=>{
+      mpMode='host';
+      mpSetStatus('Waiting for P2 to join...');
+    });
+    peer.on('connection',conn=>{
+      mpChannel=conn;
+      mpChannel.on('open',()=>{
+        mpConnected=true;mpMode='host';
+        document.getElementById('mp-p2-indicator').style.display='block';
+        mpSetStatus('P2 CONNECTED! 🟢');
+        document.getElementById('mp-code-display').textContent=mpRoomCode+' ✓';
+      });
+      mpChannel.on('data',mpReceive);
+      mpChannel.on('close',mpDisconnect);
+    });
+    peer.on('error',e=>mpSetStatus('Error: '+e.type));
+  });
+}
+
+function mpJoin(){
+  const code=document.getElementById('mp-join-input').value.trim().toLowerCase();
+  if(!code){mpSetStatus('Enter a room code!');return;}
+  mpSetStatus('Connecting...');
+  loadPeerJS(()=>{
+    peer=new Peer();
+    peer.on('open',()=>{
+      mpChannel=peer.connect(code);
+      mpChannel.on('open',()=>{
+        mpConnected=true;mpMode='guest';
+        p2.active=true;
+        // Position P2 ship offset from host
+        p2.x=canvas.width/2+60;p2.y=canvas.height/2;
+        document.getElementById('mp-p2-indicator').textContent='P2 MODE ●';
+        document.getElementById('mp-p2-indicator').style.display='block';
+        mpSetStatus('CONNECTED! You are P2 🟡');
+        // Hide multiplayer menu and show game controls
+        document.getElementById('mp-menu').style.display='none';
+      });
+      mpChannel.on('data',mpReceive);
+      mpChannel.on('close',mpDisconnect);
+    });
+    peer.on('error',e=>mpSetStatus('Error: '+e.type+' — check code'));
+  });
+}
+
+function mpDisconnect(){
+  mpConnected=false;mpMode=null;mpChannel=null;
+  p2.active=false;
+  document.getElementById('mp-p2-indicator').style.display='none';
+  mpSetStatus('Disconnected.');
+}
+
+// ── Send/receive game state ──
+function mpSend(data){
+  if(mpChannel&&mpChannel.open)try{mpChannel.send(JSON.stringify(data));}catch(e){}
+}
+
+function mpReceive(raw){
+  try{
+    const d=JSON.parse(raw);
+    if(d.type==='p2state'){
+      // Host receives P2 position/actions
+      p2.x=d.x;p2.y=d.y;p2.vx=d.vx;p2.vy=d.vy;p2.active=true;
+      if(d.fireA){p2FireA();
+        const spd=12,col='#ffe000';
+        bullets.push({x:p2.x,y:p2.y-20,vx:-2,vy:-spd,color:col,size:4,p2:true});
+        bullets.push({x:p2.x,y:p2.y-20,vx:2,vy:-spd,color:col,size:4,p2:true});
+      }
+      if(d.fireB){p2FireB();
+        bullets.push({x:p2.x,y:p2.y-15,vx:0,vy:-9,color:'#ffaa00',size:7,p2:true});
+      }
+    } else if(d.type==='gamestate'){
+      // Guest receives full game state from host
+      if(d.ship){ship.x=d.ship.x;ship.y=d.ship.y;}
+      if(d.p2){p2.x=d.p2.x;p2.y=d.p2.y;p2.active=true;}
+      if(d.asteroids)asteroids.splice(0,asteroids.length,...d.asteroids.map(a=>Object.assign(spawnEdgeAsteroid(),a)));
+      if(typeof d.score==='number'){score=d.score;updateHUD();}
+    }
+  }catch(e){}
+}
+
+// ── Guest input loop — sends controller state to host ──
+let guestInput={x:0,y:0,fireA:false,fireB:false};
+function mpGuestTick(){
+  if(mpMode!=='guest'||!mpConnected)return;
+  // Guest controls P2 using their own dpad
+  p2.vx=inputX*6;p2.vy=inputY*6;
+  p2.x=Math.max(20,Math.min(canvas.width-20,p2.x+p2.vx));
+  p2.y=Math.max(20,Math.min(canvas.height-20,p2.y+p2.vy));
+  mpSend({type:'p2state',x:p2.x,y:p2.y,vx:p2.vx,vy:p2.vy,fireA:guestInput.fireA,fireB:guestInput.fireB});
+  guestInput.fireA=false;guestInput.fireB=false;
+}
+
+// ── Host broadcasts condensed game state every 3 frames ──
+let mpBroadcastTick=0;
+function mpHostBroadcast(){
+  if(mpMode!=='host'||!mpConnected)return;
+  mpBroadcastTick++;
+  if(mpBroadcastTick%3!==0)return;
+  mpSend({type:'gamestate',
+    ship:{x:ship.x,y:ship.y},
+    p2:{x:p2.x,y:p2.y},
+    score,wave
+  });
+}
+
+// ── Hook P2 fire buttons (guest uses same fire buttons but tagged) ──
+// Guest fireA/B set guestInput flags
+const _origFireA=doFireA,_origFireB=doFireB;
+// Override doFireA/B for guest mode
+function doFireAmp(){
+  if(mpMode==='guest'){guestInput.fireA=true;p2FireA();return;}
+  _origFireA();
+}
+function doFireBmp(){
+  if(mpMode==='guest'){guestInput.fireB=true;p2FireB();return;}
+  _origFireB();
+}
+
 // ════════════════════════════════════════════
 //  BOOT
 // ════════════════════════════════════════════
@@ -2966,6 +3237,11 @@ requestAnimationFrame(update);
 document.getElementById('initials-input').addEventListener('input',function(){
   this.value=this.value.toUpperCase().replace(/[^A-Z]/g,'').slice(0,3);
 });
+// Wire multiplayer fire overrides
+fireA.addEventListener('touchstart',e=>{e.preventDefault();doFireAmp();},{passive:false});
+fireB.addEventListener('touchstart',e=>{e.preventDefault();doFireBmp();},{passive:false});
+fireA.addEventListener('mousedown',doFireAmp);
+fireB.addEventListener('mousedown',doFireBmp);
 // Show all-time best on start screen if exists
 (function(){const hs=loadHighScore();if(hs.score>0){const el=document.getElementById('all-time-best');if(el)el.textContent=`BEST: ${hs.initials}  ${hs.score.toLocaleString()}`;}})();
 </script>
