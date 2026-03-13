@@ -134,6 +134,12 @@ canvas{display:block;}
 #share-btn{font-family:‘Orbitron’,monospace;border:1.5px solid #ff0;color:#ff0;background:transparent;padding:8px 20px;font-size:.75rem;cursor:pointer;letter-spacing:1px;transition:all .2s;}
 #share-btn:hover{background:#ff0;color:#000;}
 #share-confirm{color:#0f0;font-size:.7rem;letter-spacing:1px;min-height:14px;font-family:‘Share Tech Mono’,monospace;}
+#challenge-banner{position:absolute;top:12%;left:50%;transform:translateX(-50%);display:none;flex-direction:column;align-items:center;gap:4px;background:rgba(0,0,0,.92);border:2px solid #ff0;padding:14px 24px;z-index:31;text-align:center;box-shadow:0 0 30px rgba(255,220,0,.4);min-width:240px;pointer-events:none;}
+#challenge-banner .cb-title{font-family:‘Orbitron’,monospace;font-size:.75rem;color:#ff0;letter-spacing:.2em;text-shadow:0 0 12px #ff0;}
+#challenge-banner .cb-score{font-family:‘Orbitron’,monospace;font-size:1.3rem;color:#fff;font-weight:900;}
+#challenge-banner .cb-name{font-family:‘Share Tech Mono’,monospace;font-size:.6rem;color:#f80;letter-spacing:.1em;}
+#challenge-banner .cb-rank{font-family:‘Share Tech Mono’,monospace;font-size:.55rem;color:rgba(255,220,0,.6);letter-spacing:.1em;}
+#dreamlo-status{font-size:.55rem;color:rgba(0,255,100,.5);letter-spacing:1px;font-family:‘Share Tech Mono’,monospace;min-height:12px;text-align:center;}
 #all-time-best{color:#888;font-size:.7rem;letter-spacing:1px;font-family:‘Share Tech Mono’,monospace;min-height:14px;}
 
 /* ── GUITAR STRIP ── */
@@ -297,7 +303,17 @@ transition:box-shadow .05s;pointer-events:none;
   <div id="all-time-best"></div>
   <button id="restart-btn" onclick="restartGame()">&#9654; TRY AGAIN</button>
   <button id="share-btn" onclick="shareScore()">&#128243; SHARE SCORE</button>
+  <div id="dreamlo-status"></div>
   <div id="share-confirm"></div>
+</div>
+
+<!-- Challenge Banner (shown when opened via challenge URL) -->
+
+<div id="challenge-banner">
+  <div class="cb-title">🎯 BEAT THIS SCORE!</div>
+  <div class="cb-score" id="cb-score-val"></div>
+  <div class="cb-name" id="cb-name-val"></div>
+  <div class="cb-rank" id="cb-rank-val"></div>
 </div>
 
 <!-- Guitar Strip -->
@@ -1866,7 +1882,45 @@ function getRank(){
   return'SPACE CADET';
 }
 
-// ── HIGH SCORE / LEADERBOARD ──
+// ── DREAMLO GLOBAL LEADERBOARD ──
+const DREAMLO_PUBLIC  = '69b4825e8f40bb1b14b2f7ca';
+const DREAMLO_PRIVATE = '_8ttygvNXEGlBB_lrbOT9Ay3Ywrjov0EGFC-Cd3BtsFA';
+const DREAMLO_BASE    = 'http://dreamlo.com/lb/';
+
+function dreamloPost(initials, sc, rank){
+  const name=encodeURIComponent(initials+'|'+rank);
+  const url=`${DREAMLO_BASE}${DREAMLO_PRIVATE}/add/${name}/${sc}`;
+  fetch(url).catch(()=>{});
+  document.getElementById('dreamlo-status').textContent='↑ SCORE SUBMITTED TO GLOBAL BOARD';
+  setTimeout(()=>{const el=document.getElementById('dreamlo-status');if(el)el.textContent='';},3000);
+}
+
+function dreamloFetch(){
+  fetch(`${DREAMLO_BASE}${DREAMLO_PUBLIC}/json/5`)
+    .then(r=>r.json())
+    .then(data=>{
+      const entries=data?.dreamlo?.leaderboard?.entry;
+      if(!entries)return;
+      const list=Array.isArray(entries)?entries:[entries];
+      const wrap=document.getElementById('leaderboard-rows');
+      if(!wrap)return;
+      const medals=['🥇','🥈','🥉','4','5'];
+      const rankClasses=['gold','silver','bronze','',''];
+      wrap.innerHTML=list.map((e,i)=>{
+        const parts=(e.playerName||'').split('|');
+        const inits=parts[0]||'???';
+        const rnk=parts[1]||'';
+        return`<div class="lb-row">
+          <div class="lb-rank ${rankClasses[i]||''}">${medals[i]||i+1}</div>
+          <div class="lb-initials">${inits}</div>
+          <div class="lb-score">${parseInt(e.score).toLocaleString()}</div>
+          <div class="lb-rankname">${rnk}</div>
+        </div>`;
+      }).join('');
+    }).catch(()=>{}); // fall back to local silently
+}
+
+// ── LOCAL LEADERBOARD (fallback) ──
 const HS_KEY='drumship_hs_v2';
 function loadLeaderboard(){try{return JSON.parse(localStorage.getItem(HS_KEY))||[];}catch(e){return[];}}
 function saveToLeaderboard(s,initials,rank){
@@ -1883,20 +1937,71 @@ function loadHighScore(){
 }
 
 function renderLeaderboard(){
+  // Try dreamlo first; local board renders immediately as fallback
   const lb=loadLeaderboard();
   const wrap=document.getElementById('leaderboard-rows');
   if(!wrap)return;
-  if(lb.length===0){wrap.innerHTML='<div id="leaderboard-empty">NO SCORES YET · BE THE FIRST</div>';return;}
-  const medals=['🥇','🥈','🥉','4','5'];
-  const rankClasses=['gold','silver','bronze','',''];
-  wrap.innerHTML=lb.map((e,i)=>`
-    <div class="lb-row">
-      <div class="lb-rank ${rankClasses[i]}">${medals[i]}</div>
-      <div class="lb-initials">${e.initials}</div>
-      <div class="lb-score">${e.score.toLocaleString()}</div>
-      <div class="lb-rankname">${e.rank||''}</div>
-    </div>`).join('');
+  if(lb.length===0){wrap.innerHTML='<div id="leaderboard-empty">NO SCORES YET · BE THE FIRST</div>';}
+  else{
+    const medals=['🥇','🥈','🥉','4','5'];
+    const rankClasses=['gold','silver','bronze','',''];
+    wrap.innerHTML=lb.map((e,i)=>`
+      <div class="lb-row">
+        <div class="lb-rank ${rankClasses[i]}">${medals[i]}</div>
+        <div class="lb-initials">${e.initials}</div>
+        <div class="lb-score">${e.score.toLocaleString()}</div>
+        <div class="lb-rankname">${e.rank||''}</div>
+      </div>`).join('');
+  }
+  dreamloFetch(); // overlay with live global scores if available
 }
+
+// ── CHALLENGE URL ──
+// Encode: ?c=INITIALS-SCORE-WAVE-RANKNAME (base64)
+function buildChallengeURL(initials,sc,wv,rank){
+  const payload=btoa(`${initials}|${sc}|${wv}|${rank}`);
+  return`https://jbt125-coder.github.io/drumship/?c=${payload}`;
+}
+function parseChallengeURL(){
+  try{
+    const params=new URLSearchParams(window.location.search);
+    const c=params.get('c');
+    if(!c)return null;
+    const parts=atob(c).split('|');
+    if(parts.length<4)return null;
+    return{initials:parts[0],score:parseInt(parts[1]),wave:parseInt(parts[2]),rank:parts[3]};
+  }catch(e){return null;}
+}
+function showChallengeBanner(ch){
+  const b=document.getElementById('challenge-banner');
+  if(!b||!ch)return;
+  document.getElementById('cb-score-val').textContent=ch.score.toLocaleString()+' PTS';
+  document.getElementById('cb-name-val').textContent=ch.initials+' · WAVE '+ch.wave;
+  document.getElementById('cb-rank-val').textContent=ch.rank;
+  b.style.display='flex';
+  setTimeout(()=>b.style.display='none',6000);
+}
+
+// ── GAME OVER SCREEN ──
+function getInitials(){
+  return(document.getElementById('initials-input').value||'').trim().toUpperCase();
+}
+function requireInitials(cb){
+  const inp=document.getElementById('initials-input');
+  if(!inp.value.trim()){
+    inp.style.borderBottomColor='#f00';
+    inp.placeholder='← TYPE HERE';
+    inp.focus();
+    const lbl=document.getElementById('initials-label');
+    lbl.textContent='⚠ INITIALS REQUIRED!';
+    lbl.style.color='#f44';
+    setTimeout(()=>{inp.style.borderBottomColor='#f0f';inp.placeholder='AAA';lbl.textContent='ENTER INITIALS';lbl.style.color='';},2000);
+    return false;
+  }
+  cb();
+  return true;
+}
+
 function showGameOver(){
   const hs=loadHighScore();
   const isNew=score>hs.score;
@@ -1908,34 +2013,43 @@ function showGameOver(){
   rankEl.textContent='⭐ '+rank+' ⭐';
   document.getElementById('all-time-best').textContent=hs.score>0?`BEST: ${hs.initials}  ${hs.score.toLocaleString()}`:'';
   const inp=document.getElementById('initials-input');
-  inp.value=isNew?'':hs.initials.replace(/-/g,'');
+  inp.value='';
+  inp.style.borderBottomColor='#f0f';
+  document.getElementById('initials-label').textContent='ENTER INITIALS';
+  document.getElementById('initials-label').style.color='';
   document.getElementById('initials-row').style.display='flex';
   document.getElementById('share-btn').style.display='block';
   document.getElementById('share-confirm').textContent='';
+  document.getElementById('dreamlo-status').textContent='';
 }
 
 function shareScore(){
-  const inp=document.getElementById('initials-input');
-  const initials=(inp.value||'???').toUpperCase().slice(0,3);
-  const rank=getRank();
-  saveToLeaderboard(score,initials,rank);
-  renderLeaderboard();
-  const msg=`🚀 ${initials} scored ${score.toLocaleString()} pts on Wave ${wave} as a ${rank} in Asteroid Jockey! Can you beat it?\nhttps://jbt125-coder.github.io/drumship/`;
-  if(navigator.share){navigator.share({text:msg}).catch(()=>{});}
-  else{navigator.clipboard.writeText(msg).then(()=>{document.getElementById('share-confirm').textContent='✓ COPIED TO CLIPBOARD';}).catch(()=>{document.getElementById('share-confirm').textContent='Open Messages & paste!';});}
+  requireInitials(()=>{
+    const initials=getInitials();
+    const rank=getRank();
+    saveToLeaderboard(score,initials,rank);
+    dreamloPost(initials,score,rank);
+    renderLeaderboard();
+    const url=buildChallengeURL(initials,score,wave,rank);
+    const msg=`🚀 ${initials} scored ${score.toLocaleString()} pts · Wave ${wave} · ${rank}\nCan you beat it? Play here:\n${url}`;
+    if(navigator.share){navigator.share({text:msg}).catch(()=>{});}
+    else{navigator.clipboard.writeText(msg).then(()=>{document.getElementById('share-confirm').textContent='✓ COPIED TO CLIPBOARD';}).catch(()=>{document.getElementById('share-confirm').textContent='Open Messages & paste!';});}
+  });
 }
 
 function restartGame(){
-  const inp=document.getElementById('initials-input');
-  const initials=(inp.value||'???').toUpperCase().slice(0,3);
-  const rank=getRank();
-  saveToLeaderboard(score,initials,rank);
-  if(otoOsc&&otoGain){otoOsc.frequency.cancelScheduledValues(audioCtx.currentTime);otoGain.gain.cancelScheduledValues(audioCtx.currentTime);otoGain.gain.setTargetAtTime(0,audioCtx.currentTime,.05);}
-  dpadActive=false;inputX=0;inputY=0;stick.style.transform='translate(0,0)';
-  document.getElementById('gameover-ui').style.display='none';
-  document.getElementById('gameover-ui').querySelector('h2').textContent='SHIP DESTROYED';
-  resetGame();spawnAsteroids();gameState='PLAYING';radarRunning=true;
-  closeLoopScreen();
+  requireInitials(()=>{
+    const initials=getInitials();
+    const rank=getRank();
+    saveToLeaderboard(score,initials,rank);
+    dreamloPost(initials,score,rank);
+    if(otoOsc&&otoGain){otoOsc.frequency.cancelScheduledValues(audioCtx.currentTime);otoGain.gain.cancelScheduledValues(audioCtx.currentTime);otoGain.gain.setTargetAtTime(0,audioCtx.currentTime,.05);}
+    dpadActive=false;inputX=0;inputY=0;stick.style.transform='translate(0,0)';
+    document.getElementById('gameover-ui').style.display='none';
+    document.getElementById('gameover-ui').querySelector('h2').textContent='SHIP DESTROYED';
+    resetGame();spawnAsteroids();gameState='PLAYING';radarRunning=true;
+    closeLoopScreen();
+  });
 }
 
 // Mini radar tap → open loop screen
@@ -2843,6 +2957,8 @@ buildBeatGrid();
 buildDrumChips();
 switchTab('library');
 renderLeaderboard();
+// Check for challenge URL
+(function(){const ch=parseChallengeURL();if(ch)setTimeout(()=>showChallengeBanner(ch),800);})();
 animatePreview._last=performance.now();
 previewRaf=requestAnimationFrame(animatePreview);
 requestAnimationFrame(update);
