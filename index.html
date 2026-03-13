@@ -2466,11 +2466,23 @@ function update(ts){
   if(gameState==='START'||gameState==='PAUSED'){
     drawStars();
   } else if(gameState==='PLAYING'){
-    handleKeyboard();tickRadar(dt);updateGame();
-    if(warpActive)updateDrawWarp();
+    if(mpMode!=='guest'){
+      // Host or solo: run full simulation
+      handleKeyboard();tickRadar(dt);updateGame();
+      if(warpActive)updateDrawWarp();
+      mpHostBroadcast();
+    } else {
+      // Guest: simulation driven by host frames; just render + send input
+      handleKeyboard();
+      tickRadar(dt);
+      drawStars();
+      // Draw world state received from host
+      drawAsteroids();drawAliens();drawBullets();drawAlienBullets();
+      if(boss)drawBoss();
+      if(megaBoss)drawMegaBossGuest();
+    }
     drawP2Ship();
     mpGuestTick();
-    mpHostBroadcast();
   } else if(gameState==='GAMEOVER'){
     drawStars();tickRadar(dt);
   }
@@ -2985,6 +2997,55 @@ function spawnBoss(){
 }
 
 
+// ── Guest draw helpers (render-only, no physics) ──
+function drawAsteroids(){
+  asteroids.forEach(a=>{
+    if(!a.shape)return;
+    ctx.save();ctx.translate(a.x,a.y);ctx.rotate(a.rot||0);
+    ctx.strokeStyle=a.color;ctx.lineWidth=1.5;ctx.shadowBlur=6;ctx.shadowColor=a.color;
+    ctx.beginPath();a.shape.forEach((p,i)=>i?ctx.lineTo(p.x,p.y):ctx.moveTo(p.x,p.y));
+    ctx.closePath();ctx.stroke();ctx.restore();ctx.shadowBlur=0;
+  });
+}
+function drawAliens(){
+  aliens.forEach(a=>{
+    ctx.save();ctx.translate(a.x,a.y);
+    ctx.strokeStyle=a.color||'#f0f';ctx.fillStyle='rgba(255,0,255,.08)';ctx.lineWidth=1.5;ctx.shadowBlur=8;ctx.shadowColor=a.color||'#f0f';
+    ctx.beginPath();ctx.arc(0,0,a.size||12,0,Math.PI*2);ctx.fill();ctx.stroke();
+    ctx.restore();ctx.shadowBlur=0;
+  });
+}
+function drawBullets(){
+  bullets.forEach(b=>{
+    ctx.fillStyle=b.color;ctx.shadowBlur=8;ctx.shadowColor=b.color;
+    ctx.beginPath();ctx.arc(b.x,b.y,b.size||4,0,Math.PI*2);ctx.fill();
+  });ctx.shadowBlur=0;
+}
+function drawAlienBullets(){
+  alienBullets.forEach(b=>{
+    ctx.fillStyle=b.color||'#f00';ctx.shadowBlur=6;ctx.shadowColor=b.color||'#f00';
+    ctx.beginPath();ctx.arc(b.x,b.y,3,0,Math.PI*2);ctx.fill();
+  });ctx.shadowBlur=0;
+}
+function drawBoss(){
+  if(!boss)return;
+  const s=boss.size||55,col=boss.color||'#f0f';
+  ctx.save();ctx.translate(boss.x,boss.y);ctx.rotate(boss.rot||0);
+  ctx.strokeStyle=col;ctx.fillStyle='rgba(255,0,255,.07)';ctx.lineWidth=2;ctx.shadowBlur=18;ctx.shadowColor=col;
+  ctx.beginPath();
+  for(let i=0;i<8;i++){const a=i*Math.PI/4,r=i%2===0?s:s*.6;ctx.lineTo(Math.cos(a)*r,Math.sin(a)*r);}
+  ctx.closePath();ctx.fill();ctx.stroke();ctx.restore();ctx.shadowBlur=0;
+}
+function drawMegaBossGuest(){
+  if(!megaBoss)return;
+  const s=megaBoss.size||90,col=megaBoss.color||'#f0f';
+  ctx.save();ctx.translate(megaBoss.x,megaBoss.y);ctx.rotate(megaBoss.rot||0);
+  ctx.strokeStyle=col;ctx.fillStyle='rgba(255,0,200,.06)';ctx.lineWidth=2.5;ctx.shadowBlur=22;ctx.shadowColor=col;
+  ctx.beginPath();
+  for(let i=0;i<12;i++){const a=i*Math.PI/6,r=i%2===0?s:s*.7;ctx.lineTo(Math.cos(a)*r,Math.sin(a)*r);}
+  ctx.closePath();ctx.fill();ctx.stroke();ctx.restore();ctx.shadowBlur=0;
+}
+
 // ════════════════════════════════════════════
 //  MULTIPLAYER — WebRTC P2P
 // ════════════════════════════════════════════
@@ -3159,59 +3220,110 @@ function mpSend(data){
   if(mpChannel&&mpChannel.open)try{mpChannel.send(JSON.stringify(data));}catch(e){}
 }
 
+function mpSerializeAsteroid(a){return{x:a.x,y:a.y,vx:a.vx,vy:a.vy,size:a.size,rot:a.rot,rotSpeed:a.rotSpeed,color:a.color,shape:a.shape};}
+function mpSerializeBullet(b){return{x:b.x,y:b.y,vx:b.vx,vy:b.vy,color:b.color,size:b.size,p2:!!b.p2};}
+function mpSerializeAlien(a){return{x:a.x,y:a.y,type:a.type,color:a.color,size:a.size||12,hp:a.hp};}
+function mpSerializeBoss(b){if(!b)return null;return{x:b.x,y:b.y,hp:b.hp,maxHp:b.maxHp,size:b.size,rot:b.rot,color:b.color};}
+function mpSerializeMegaBoss(m){if(!m)return null;return{x:m.x,y:m.y,hp:m.hp,maxHp:m.maxHp,size:m.size,rot:m.rot,color:m.color,coreColor:m.coreColor,orbitAngle:m.orbitAngle,turrets:m.turrets};}
+
 function mpReceive(raw){
   try{
     const d=JSON.parse(raw);
-    if(d.type==='p2state'){
-      // Host receives P2 position/actions
-      p2.x=d.x;p2.y=d.y;p2.vx=d.vx;p2.vy=d.vy;p2.active=true;
-      if(d.fireA){p2FireA();
+
+    if(d.type==='p2input'){
+      // HOST receives P2 controller input — move P2 ship and fire
+      p2.vx=d.ix*6; p2.vy=d.iy*6;
+      p2.x=Math.max(20,Math.min(canvas.width-20,(p2.x||canvas.width/2+60)+p2.vx));
+      p2.y=Math.max(20,Math.min(canvas.height-20,(p2.y||canvas.height/2)+p2.vy));
+      p2.active=true;
+      if(d.fireA){
+        p2FireA();
         const spd=12,col='#ffe000';
-        bullets.push({x:p2.x,y:p2.y-20,vx:-2,vy:-spd,color:col,size:4,p2:true});
-        bullets.push({x:p2.x,y:p2.y-20,vx:2,vy:-spd,color:col,size:4,p2:true});
+        bullets.push({x:p2.x,y:p2.y-20,vx:-1.5,vy:-spd,color:col,size:4,p2:true});
+        bullets.push({x:p2.x,y:p2.y-20,vx:1.5,vy:-spd,color:col,size:4,p2:true});
       }
-      if(d.fireB){p2FireB();
+      if(d.fireB){
+        p2FireB();
         bullets.push({x:p2.x,y:p2.y-15,vx:0,vy:-9,color:'#ffaa00',size:7,p2:true});
       }
-    } else if(d.type==='gamestate'){
-      // Guest receives full game state from host
-      if(d.ship){ship.x=d.ship.x;ship.y=d.ship.y;}
-      if(d.p2){p2.x=d.p2.x;p2.y=d.p2.y;p2.active=true;}
-      if(d.asteroids)asteroids.splice(0,asteroids.length,...d.asteroids.map(a=>Object.assign(spawnEdgeAsteroid(),a)));
-      if(typeof d.score==='number'){score=d.score;updateHUD();}
     }
-  }catch(e){}
+
+    else if(d.type==='frame'){
+      // GUEST receives full frame from host — render everything from this
+      // P1 (host ship) shown as normal cyan ship
+      if(d.p1){ship.x=d.p1.x;ship.y=d.p1.y;ship.vx=d.p1.vx||0;ship.vy=d.p1.vy||0;}
+      // P2 position echoed back so guest sees their ship at confirmed position
+      if(d.p2){p2.x=d.p2.x;p2.y=d.p2.y;p2.active=true;}
+      // Full world state
+      asteroids.length=0;
+      if(d.asteroids)d.asteroids.forEach(a=>asteroids.push(a));
+      bullets.length=0;
+      if(d.bullets)d.bullets.forEach(b=>bullets.push(b));
+      aliens.length=0;
+      if(d.aliens)d.aliens.forEach(a=>aliens.push(a));
+      alienBullets.length=0;
+      if(d.alienBullets)d.alienBullets.forEach(b=>alienBullets.push(b));
+      boss=d.boss||null;
+      megaBoss=d.megaBoss||null;
+      if(typeof d.score==='number'&&d.score!==score){score=d.score;updateHUD();}
+      if(typeof d.wave==='number'&&d.wave!==wave){wave=d.wave;updateHUD();}
+      if(typeof d.health==='number'){health=d.health;updateHealthBar();}
+      if(typeof d.lives==='number'&&d.lives!==lives){lives=d.lives;updateHUD();}
+      if(d.gameState&&d.gameState!==gameState){
+        gameState=d.gameState;
+        if(d.gameState==='GAMEOVER'){
+          document.getElementById('final-score').textContent=`SCORE: ${score.toLocaleString()} | WAVE: ${wave}`;
+          document.getElementById('gameover-ui').style.display='flex';
+          showGameOver();
+        }
+      }
+      // Boss bars
+      if(boss){
+        document.getElementById('boss-bar-wrap').style.display='flex';
+        document.getElementById('boss-bar-inner').style.width=(boss.hp/boss.maxHp*100)+'%';
+      } else {
+        document.getElementById('boss-bar-wrap').style.display='none';
+      }
+      if(megaBoss){
+        document.getElementById('mega-boss-bar-wrap').style.display='flex';
+        document.getElementById('mega-boss-bar-inner').style.width=(megaBoss.hp/megaBoss.maxHp*100)+'%';
+      } else {
+        document.getElementById('mega-boss-bar-wrap').style.display='none';
+      }
+    }
+  }catch(e){console.warn('mpReceive error',e);}
 }
 
-// ── Guest input loop — sends controller state to host ──
-let guestInput={x:0,y:0,fireA:false,fireB:false};
+// ── Guest: send input to host every frame ──
+let guestInput={ix:0,iy:0,fireA:false,fireB:false};
 function mpGuestTick(){
   if(mpMode!=='guest'||!mpConnected)return;
-  // Guest controls P2 using their own dpad
-  p2.vx=inputX*6;p2.vy=inputY*6;
-  p2.x=Math.max(20,Math.min(canvas.width-20,p2.x+p2.vx));
-  p2.y=Math.max(20,Math.min(canvas.height-20,p2.y+p2.vy));
-  mpSend({type:'p2state',x:p2.x,y:p2.y,vx:p2.vx,vy:p2.vy,fireA:guestInput.fireA,fireB:guestInput.fireB});
+  // Guest does NO local game simulation — just sends input
+  guestInput.ix=inputX;
+  guestInput.iy=inputY;
+  mpSend({type:'p2input',ix:guestInput.ix,iy:guestInput.iy,fireA:guestInput.fireA,fireB:guestInput.fireB});
   guestInput.fireA=false;guestInput.fireB=false;
 }
 
-// ── Host broadcasts condensed game state every 3 frames ──
-let mpBroadcastTick=0;
+// ── Host: broadcast full frame to guest every frame ──
 function mpHostBroadcast(){
   if(mpMode!=='host'||!mpConnected)return;
-  mpBroadcastTick++;
-  if(mpBroadcastTick%3!==0)return;
-  mpSend({type:'gamestate',
-    ship:{x:ship.x,y:ship.y},
+  mpSend({type:'frame',
+    p1:{x:ship.x,y:ship.y,vx:ship.vx,vy:ship.vy},
     p2:{x:p2.x,y:p2.y},
-    score,wave
+    asteroids:asteroids.map(mpSerializeAsteroid),
+    bullets:bullets.map(mpSerializeBullet),
+    aliens:aliens.map(mpSerializeAlien),
+    alienBullets:alienBullets.map(b=>({x:b.x,y:b.y,vx:b.vx,vy:b.vy,color:b.color,life:b.life})),
+    boss:mpSerializeBoss(boss),
+    megaBoss:mpSerializeMegaBoss(megaBoss),
+    score,wave,health,lives,
+    gameState,
   });
 }
 
-// ── Hook P2 fire buttons (guest uses same fire buttons but tagged) ──
-// Guest fireA/B set guestInput flags
+// ── Override fire buttons for guest mode ──
 const _origFireA=doFireA,_origFireB=doFireB;
-// Override doFireA/B for guest mode
 function doFireAmp(){
   if(mpMode==='guest'){guestInput.fireA=true;p2FireA();return;}
   _origFireA();
@@ -3220,6 +3332,9 @@ function doFireBmp(){
   if(mpMode==='guest'){guestInput.fireB=true;p2FireB();return;}
   _origFireB();
 }
+
+// ── Guest: suppress local game updates (host owns the simulation) ──
+// updateGame() is already only called in host's update loop path
 
 // ════════════════════════════════════════════
 //  BOOT
