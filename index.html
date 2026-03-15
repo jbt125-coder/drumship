@@ -220,8 +220,12 @@ transition:box-shadow .05s;pointer-events:none;
 <div id="mp-p2-indicator">P2 CONNECTED ●</div>
 <div id="hud">
   <div class="hud-block">
-    <span class="hud-label">Score</span>
+    <span class="hud-label" id="p1-score-label">Score</span>
     <span class="hud-value" id="score-val">0</span>
+  </div>
+  <div class="hud-block" id="p2-score-block" style="display:none">
+    <span class="hud-label" style="color:rgba(255,220,0,.6)">P2 Score</span>
+    <span class="hud-value" id="p2-score-val" style="color:#ffe000;text-shadow:0 0 10px #ffe000">0</span>
   </div>
   <div class="hud-block" id="wave-display" style="align-items:center">
     <span class="hud-label">Wave</span>
@@ -1408,6 +1412,8 @@ function drawStars(){
 //  GAME STATE
 // ════════════════════════════════════════════
 let gameState='START';
+let p2={x:0,y:0,vx:0,vy:0,active:false,invTimer:0,hit:0,fireA:false,fireB:false,score:0};
+let isGuestMode=false;
 const MAX_LIVES=5;
 let lives,score,wave,powerup,powerupTimer,invincibleTimer;
 let powerupTimers={spread:0,rapid:0,shield:0}; // individual timers per type for stacking
@@ -1453,7 +1459,7 @@ let bonusRoundTimer=0;
 let bonusSpawnTimer=0;
 
 function resetGame(){
-  lives=MAX_LIVES;score=0;wave=1;powerup=null;powerupTimer=0;invincibleTimer=0;
+  lives=MAX_LIVES;score=0;wave=1;powerup=null;powerupTimer=0;invincibleTimer=0;p2.score=0;p2.invTimer=0;p2.hit=0;
   powerupTimers={spread:0,rapid:0,shield:0};
   bullets.length=0;asteroids.length=0;powerupItems.length=0;particles.length=0;
   aliens.length=0;alienBullets.length=0;alienSpawnTimer=0;
@@ -1479,6 +1485,14 @@ function resetGame(){
 function updateHUD(){
   document.getElementById('score-val').textContent=score;
   document.getElementById('wave-val').textContent=wave;
+  if(mpConnected){
+    document.getElementById('p2-score-block').style.display='block';
+    document.getElementById('p2-score-val').textContent=p2.score;
+    document.getElementById('p1-score-label').textContent='P1 Score';
+  } else {
+    document.getElementById('p2-score-block').style.display='none';
+    document.getElementById('p1-score-label').textContent='Score';
+  }
   const ld=document.getElementById('lives-display');ld.innerHTML='';
   for(let i=0;i<MAX_LIVES;i++){const d=document.createElement('div');d.className='life-icon'+(i>=lives?' lost':'');ld.appendChild(d);}
   const pd=document.getElementById('powerup-display');
@@ -1522,7 +1536,7 @@ function spawnAlien(){
 function updateAliens(){
   alienSpawnTimer++;
   const spawnInterval=Math.max(120,360-wave*20);
-  if(alienSpawnTimer>spawnInterval&&aliens.length<3+Math.floor(wave/2)){spawnAlien();alienSpawnTimer=0;}
+  if(!bonusRound&&alienSpawnTimer>spawnInterval&&aliens.length<3+Math.floor(wave/2)){spawnAlien();alienSpawnTimer=0;}
 
   for(let i=aliens.length-1;i>=0;i--){
     const al=aliens[i];
@@ -1624,6 +1638,8 @@ function updateAliens(){
     if(bl.life<=0||bl.x<0||bl.x>canvas.width||bl.y<0||bl.y>canvas.height){alienBullets.splice(b,1);continue;}
     ctx.fillStyle=bl.color;ctx.shadowBlur=8;ctx.shadowColor=bl.color;
     ctx.beginPath();ctx.arc(bl.x,bl.y,3,0,Math.PI*2);ctx.fill();ctx.shadowBlur=0;
+    // Hit P2 ship
+    if(p2.active&&mpConnected&&p2.invTimer===0&&Math.hypot(bl.x-p2.x,bl.y-p2.y)<16){p2Hit();p2.invTimer=90;p2.hit=15;alienBullets.splice(b,1);spawnParticles(p2.x,p2.y,'#ffe000',6);continue;}
     // Hit player
     if(invincibleTimer===0&&powerupTimers.shield<=0&&bonusShieldTimer===0&&cowbellShieldTimer===0&&bonusShieldTimer===0&&Math.hypot(bl.x-ship.x,bl.y-ship.y)<16){
       alienBullets.splice(b,1);takeDamage();continue;
@@ -1788,7 +1804,7 @@ function updateBoss(dt){
   document.getElementById('boss-bar-inner').style.width=(boss.hp/boss.maxHp*100)+'%';
   for(let b=bullets.length-1;b>=0;b--){
     const bl=bullets[b];
-    if(Math.hypot(bl.x-boss.x,bl.y-boss.y)<boss.size+bl.size){
+    if(boss&&Math.hypot(bl.x-boss.x,bl.y-boss.y)<boss.size+bl.size){
       const dmg=bl.guitar?12:1;boss.hp-=dmg;boss.hit=8;bullets.splice(b,1);
       if(boss.hp<=0){
         playAlienExplosion(boss.x,boss.y);spawnParticles(boss.x,boss.y,currentGalaxy.bossC,30);spawnParticles(boss.x,boss.y,currentGalaxy.megaC,20);
@@ -2473,13 +2489,15 @@ function update(ts){
       mpHostBroadcast();
     } else {
       // Guest: simulation driven by host frames; just render + send input
-      handleKeyboard();
+      isGuestMode=true;handleKeyboard();isGuestMode=false;
       tickRadar(dt);
       drawStars();
       // Draw world state received from host
       drawAsteroids();drawAliens();drawBullets();drawAlienBullets();
       if(boss)drawBoss();
       if(megaBoss)drawMegaBossGuest();
+      // Draw P1 (host) ship on guest screen
+      drawP1ShipOnGuest();
     }
     drawP2Ship();
     mpGuestTick();
@@ -2493,6 +2511,7 @@ function update(ts){
 //  GAME UPDATE
 // ════════════════════════════════════════════
 function updateGame(){
+  if(gameState!=='PLAYING')return;
   drawStars();
   if(invincibleTimer>0)invincibleTimer--;
   if(powerupTimer>0){
@@ -2509,6 +2528,8 @@ function updateGame(){
   });
   if(fireCdA>0)fireCdA--;if(fireCdB>0)fireCdB--;if(fireCdC>0)fireCdC--;
   if(cowbellShieldTimer>0)cowbellShieldTimer--;
+  if(p2.invTimer>0)p2.invTimer--;
+  if(p2.hit>0)p2.hit--;
   if(bonusShieldTimer>0)bonusShieldTimer--;
 
   // Health regen
@@ -2571,8 +2592,8 @@ function updateGame(){
     }
   }
 
-  if(dpadActive){ship.vx=inputX*ship.speed;ship.vy=inputY*ship.speed;}
-  else{ship.vx*=.88;ship.vy*=.88;}
+  if(!isGuestMode){if(dpadActive){ship.vx=inputX*ship.speed;ship.vy=inputY*ship.speed;}
+  else{ship.vx*=.88;ship.vy*=.88;}}
   // Scratch gravity pulls ship in drag direction
   if(scratchStrength>0){
     ship.vx+=scratchGravity.x;
@@ -2658,7 +2679,7 @@ function updateGame(){
       if(Math.hypot(bl.x-ast.x,bl.y-ast.y)<ast.size/2){
         playAsteroidHit(ast.size);playBulletTick();
         spawnParticles(ast.x,ast.y,ast.color,Math.floor(ast.size/4));spawnPowerup(ast.x,ast.y);
-        score+=Math.floor(ast.size);
+        if(bl.p2){p2.score+=Math.floor(ast.size);}else{score+=Math.floor(ast.size);}
         if(ast.size>35){for(let s=0;s<2;s++){const ang=Math.random()*Math.PI*2,spd=.15+Math.random()*.18;asteroids.push(makeAsteroid(ast.x+(Math.random()-.5)*20,ast.y+(Math.random()-.5)*20,ast.size*.55,Math.cos(ang)*spd,Math.sin(ang)*spd));}}
         asteroids.splice(a,1);hit=true;updateHUD();break;
       }
@@ -2701,6 +2722,8 @@ function updateGame(){
     ctx.beginPath();ast.shape.forEach((v,i)=>i===0?ctx.moveTo(v.x,v.y):ctx.lineTo(v.x,v.y));
     ctx.closePath();ctx.stroke();ctx.restore();ctx.shadowBlur=0;
     if(invincibleTimer===0&&powerupTimers.shield<=0&&bonusShieldTimer===0&&cowbellShieldTimer===0&&bonusShieldTimer===0&&Math.hypot(ast.x-ship.x,ast.y-ship.y)<ast.size/2+14)takeDamage();
+    // P2 asteroid collision
+    if(p2.active&&mpConnected&&p2.invTimer===0&&Math.hypot(ast.x-p2.x,ast.y-p2.y)<ast.size/2+14){p2Hit();p2.invTimer=90;p2.hit=15;spawnParticles(p2.x,p2.y,'#ffe000',8);}
 
     // Asteroids hit aliens
     for(let ai=aliens.length-1;ai>=0;ai--){
@@ -2719,14 +2742,18 @@ function updateGame(){
       }
     }
   }
-  if(asteroids.length===0&&gameState==='PLAYING'){wave++;updateHUD();spawnAsteroids();playWaveClear();}
+  if(asteroids.length===0&&gameState==='PLAYING'&&!bonusRound&&!warpActive){wave++;updateHUD();spawnAsteroids();playWaveClear();}
+  if(gameState!=='PLAYING')return;
 
   // Aliens
   updateAliens();
+  if(gameState!=='PLAYING')return;
   // Boss
   if(boss)updateBoss();
+  if(gameState!=='PLAYING')return;
   // Mega Boss
   if(megaBoss)updateMegaBoss();
+  if(gameState!=='PLAYING')return;
   // Bonus Round
   if(bonusRound)updateBonusRound();
 
@@ -3061,7 +3088,6 @@ function genRoomCode(){
 }
 
 // ── P2 state ──
-let p2={x:0,y:0,vx:0,vy:0,active:false,invTimer:0,hit:0,fireA:false,fireB:false,score:0};
 let mpMode=null; // null | 'host' | 'guest'
 let mpConn=null; // RTCPeerConnection
 let mpChannel=null; // RTCDataChannel
@@ -3092,6 +3118,21 @@ function p2Hit(){
 }
 
 // ── Draw P2 ship (boxy yellow) ──
+function drawP1ShipOnGuest(){
+  // On the guest screen, draw the host (P1) ship using the ship object (synced from host frames)
+  if(!mpConnected||mpMode!=='guest')return;
+  const flash=invincibleTimer>0&&Math.floor(invincibleTimer/4)%2===0;
+  if(flash)return;
+  ctx.save();ctx.translate(ship.x,ship.y);
+  const sc=powerupTimers&&powerupTimers.shield>0?'#0f0':'#0ff';
+  ctx.strokeStyle=sc;ctx.fillStyle='rgba(0,255,255,.07)';ctx.lineWidth=2;ctx.shadowBlur=13;ctx.shadowColor=sc;
+  ctx.beginPath();ctx.moveTo(0,-20);ctx.lineTo(15,10);ctx.lineTo(0,5);ctx.lineTo(-15,10);ctx.closePath();ctx.fill();ctx.stroke();
+  // P1 label
+  ctx.fillStyle='rgba(0,255,255,.7)';ctx.font='bold 8px monospace';ctx.textAlign='center';ctx.textBaseline='middle';
+  ctx.fillText('P1',24,-14);
+  ctx.restore();ctx.shadowBlur=0;
+}
+
 function drawP2Ship(){
   if(!p2.active||!mpConnected)return;
   const flash=p2.invTimer>0&&Math.floor(p2.invTimer/4)%2===0;
@@ -3204,7 +3245,7 @@ function mpJoin(){
       mpChannel.on('data',mpReceive);
       mpChannel.on('close',mpDisconnect);
     });
-    peer.on('error',e=>mpSetStatus('Error: '+e.type+' — check code'));
+    peer.on('error',e=>mpSetStatus('Error: '+e.type+' - check code'));
   });
 }
 
@@ -3266,6 +3307,7 @@ function mpReceive(raw){
       boss=d.boss||null;
       megaBoss=d.megaBoss||null;
       if(typeof d.score==='number'&&d.score!==score){score=d.score;updateHUD();}
+      if(typeof d.p2score==='number'){p2.score=d.p2score;updateHUD();}
       if(typeof d.wave==='number'&&d.wave!==wave){wave=d.wave;updateHUD();}
       if(typeof d.health==='number'){health=d.health;updateHealthBar();}
       if(typeof d.lives==='number'&&d.lives!==lives){lives=d.lives;updateHUD();}
@@ -3318,6 +3360,7 @@ function mpHostBroadcast(){
     boss:mpSerializeBoss(boss),
     megaBoss:mpSerializeMegaBoss(megaBoss),
     score,wave,health,lives,
+    p2score:p2.score,
     gameState,
   });
 }
@@ -3331,6 +3374,11 @@ function doFireAmp(){
 function doFireBmp(){
   if(mpMode==='guest'){guestInput.fireB=true;p2FireB();return;}
   _origFireB();
+}
+// Guest: also handle doFireC as no-op (host owns cowbell)
+function doFireCmp(){
+  if(mpMode==='guest')return;
+  doFireC();
 }
 
 // ── Guest: suppress local game updates (host owns the simulation) ──
